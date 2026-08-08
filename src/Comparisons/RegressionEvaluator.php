@@ -202,10 +202,9 @@ final class RegressionEvaluator
 
         $change = $current->amount
             ->minus($historical->amount)
-            ->dividedBy($historical->amount, 18, RoundingMode::HalfEven)
-            ->strippedOfTrailingZeros();
+            ->dividedBy($historical->amount, 18, RoundingMode::HalfEven);
 
-        $observed[$metric] = (string) $change;
+        $observed[$metric] = $this->decimalString($change);
 
         if ($change->isGreaterThan(BigDecimal::of((string) $threshold))) {
             $failures[] = sprintf('Regression gate [%s] exceeded its threshold.', $metric);
@@ -222,5 +221,18 @@ final class RegressionEvaluator
         $tolerance = PHP_FLOAT_EPSILON * max(1.0, abs($change), abs($threshold)) * 4;
 
         return $change - $threshold > $tolerance;
+    }
+
+    private function decimalString(BigDecimal $value): string
+    {
+        $decimal = (string) $value;
+
+        if (! str_contains($decimal, '.')) {
+            return $decimal;
+        }
+
+        $decimal = rtrim(rtrim($decimal, '0'), '.');
+
+        return $decimal === '-0' ? '0' : $decimal;
     }
 }
