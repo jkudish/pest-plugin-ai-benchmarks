@@ -59,7 +59,8 @@ final class BenchmarkCall
 
         $this->testCall->with($configurations);
         $this->hasConfigurations = true;
-        DeclarationRegistry::setConfigurations($this, array_keys($configurations));
+        /** @var array<string, Configuration> $configurations */
+        DeclarationRegistry::setConfigurations($this, $configurations);
 
         return $this;
     }

@@ -15,6 +15,9 @@ final readonly class BaselineStore
 
     public function save(string $name, Scorecard $scorecard): void
     {
+        $stableScorecard = $scorecard->toArray();
+        $this->assertPromotable($stableScorecard);
+
         $path = $this->paths->baseline($name);
 
         if (is_link($this->paths->baselines) || is_link($path)) {
@@ -83,5 +86,37 @@ final readonly class BaselineStore
         }
 
         return $record;
+    }
+
+    /** @param array<string, mixed> $scorecard */
+    public function assertPromotable(array $scorecard): void
+    {
+        $trials = $scorecard['trials'] ?? null;
+
+        if (! is_array($trials)) {
+            throw new RuntimeException('Only stable scorecards may be promoted as baselines.');
+        }
+
+        foreach ($trials as $trial) {
+            if (! is_array($trial) || ! is_array($trial['results'] ?? null)) {
+                throw new RuntimeException('Only stable scorecards may be promoted as baselines.');
+            }
+
+            foreach ($trial['results'] as $result) {
+                if (! is_array($result) || ! is_array($result['measurements'] ?? null)) {
+                    throw new RuntimeException('Only stable scorecards may be promoted as baselines.');
+                }
+
+                foreach ($result['measurements'] as $measurement) {
+                    if (! is_array($measurement) || ! is_string($measurement['mode'] ?? null)) {
+                        throw new RuntimeException('Only stable scorecards may be promoted as baselines.');
+                    }
+
+                    if ($measurement['mode'] === 'simulated') {
+                        throw new RuntimeException('Simulated evidence cannot be promoted as a baseline.');
+                    }
+                }
+            }
+        }
     }
 }

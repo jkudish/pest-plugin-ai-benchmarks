@@ -9,7 +9,7 @@ final readonly class ModelIdentityEvidence
     public function __construct(
         public ?string $requestedProvider,
         public ?string $requestedModel,
-        public string $effectiveProvider,
-        public string $effectiveModel,
+        public ?string $effectiveProvider,
+        public ?string $effectiveModel,
     ) {}
 }

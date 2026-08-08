@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
 use Jkudish\PestAiBenchmarks\Reporters\JsonReporter;
 use Jkudish\PestAiBenchmarks\Reporters\TerminalReporter;
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
@@ -72,4 +73,18 @@ it('renders a terminal summary without mutating execution evidence', function ()
         ->and($report)->toContain('Trials: 1 | Results: 1 | Passed: 1 | Failed: 0')
         ->and($report)->toContain('Measured latency: 25.00 ms')
         ->and($scorecard->toJson())->toBe($before);
+});
+
+it('rejects case arguments without a stable serializable identity', function (): void {
+    expect(fn (): string => ExecutionRecorder::caseId([new stdClass]))
+        ->toThrow(InvalidArgumentException::class, 'must be stable JSON values; [stdClass] is unsupported');
+});
+
+it('fingerprints the benchmark target source identity', function (): void {
+    $first = ExecutionRecorder::targetIdentity(fn (): string => 'first');
+    $second = ExecutionRecorder::targetIdentity(fn (): string => 'second');
+
+    expect($first)->toHaveKeys(['file', 'start_line', 'end_line', 'source_sha256'])
+        ->and($first['file'])->toEndWith('tests/Reporters/ReporterTest.php')
+        ->and($first['source_sha256'])->not->toBe($second['source_sha256']);
 });

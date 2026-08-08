@@ -6,16 +6,21 @@ namespace Jkudish\PestAiBenchmarks\Scorecards;
 
 use InvalidArgumentException;
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
+use Jkudish\PestAiBenchmarks\Results\StableEvidenceSanitizer;
 
 /** @internal */
 final readonly class Result
 {
+    public const int MAX_REASONING_BYTES = 8_192;
+
+    public ?string $reasoning;
+
     /** @param array<int, Measurement> $measurements */
     public function __construct(
         public EvidenceId $id,
         public string $scorer,
         public ?float $score,
-        public ?string $reasoning,
+        ?string $reasoning,
         public ?bool $passed,
         public array $measurements,
     ) {
@@ -33,6 +38,7 @@ final readonly class Result
             throw new InvalidArgumentException('A result must contain at least one measurement.');
         }
 
+        $this->reasoning = StableEvidenceSanitizer::text($reasoning, self::MAX_REASONING_BYTES);
     }
 
     /** @return array<string, mixed> */

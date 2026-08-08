@@ -7,6 +7,7 @@ namespace Jkudish\PestAiBenchmarks\Comparisons;
 use Closure;
 use InvalidArgumentException;
 use Jkudish\PestAiBenchmarks\BenchmarkCall;
+use Jkudish\PestAiBenchmarks\Configuration;
 use Jkudish\PestAiBenchmarks\Results\OpaqueContext;
 use LogicException;
 use WeakMap;
@@ -29,7 +30,7 @@ final class DeclarationRegistry
         self::contexts()[$call] = $context;
     }
 
-    /** @param list<string> $configurations */
+    /** @param array<string, Configuration> $configurations */
     public static function setConfigurations(BenchmarkCall $call, array $configurations): void
     {
         $declaration = self::get($call);
@@ -89,6 +90,17 @@ final class DeclarationRegistry
 
         return self::declarations()[$context]
             ?? throw new LogicException('The active benchmark declaration is not registered.');
+    }
+
+    public static function configurationName(Configuration $configuration): string
+    {
+        foreach (self::current()->configurationValues as $name => $candidate) {
+            if ($candidate === $configuration) {
+                return $name;
+            }
+        }
+
+        throw new LogicException('The active benchmark configuration is not registered.');
     }
 
     /**

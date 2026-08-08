@@ -112,7 +112,7 @@
                 },
                 "scorer": {"type": "string", "minLength": 1},
                 "score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
-                "reasoning": {"type": ["string", "null"]},
+                "reasoning": {"type": ["string", "null"], "maxLength": 8192},
                 "passed": {"type": ["boolean", "null"]},
                 "measurements": {
                     "type": "array",

@@ -9,11 +9,25 @@ on:
 
 jobs:
   phpstan:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: phpstan
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          path: pest-plugin-ai-benchmarks
+          persist-credentials: false
+
+      - name: Checkout private pricing package
+        uses: actions/checkout@v7
+        with:
+          repository: jkudish/laravel-ai-pricing
+          ref: build/pricing-package-v0.1
+          token: ${{ secrets.PRIVATE_PACKAGE_TOKEN }}
+          path: laravel-ai-pricing
+          persist-credentials: false
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -23,6 +37,9 @@ jobs:
 
       - name: Install composer dependencies
         uses: ramsey/composer-install@v4
+        with:
+          working-directory: pest-plugin-ai-benchmarks
 
       - name: Run PHPStan
+        working-directory: pest-plugin-ai-benchmarks
         run: composer analyse -- --error-format=github

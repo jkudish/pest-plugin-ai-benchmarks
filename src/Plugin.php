@@ -5,10 +5,17 @@ declare(strict_types=1);
 namespace Jkudish\PestAiBenchmarks;
 
 use InvalidArgumentException;
+use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
+use Jkudish\PestAiBenchmarks\Reporters\TerminalReporter;
+use Pest\Contracts\Plugins\AddsOutput;
 use Pest\Contracts\Plugins\HandlesArguments;
 use Pest\Contracts\Plugins\HandlesOriginalArguments;
+use Pest\Contracts\Plugins\Terminable;
+use Pest\Plugins\Parallel;
+use Pest\Support\Container;
+use Symfony\Component\Console\Output\OutputInterface;
 
-final class Plugin implements HandlesArguments, HandlesOriginalArguments
+final class Plugin implements AddsOutput, HandlesArguments, HandlesOriginalArguments, Terminable
 {
     private const string EVAL_MODE_ENV = 'PEST_EVALS';
 
@@ -21,6 +28,10 @@ final class Plugin implements HandlesArguments, HandlesOriginalArguments
     {
         self::$evalMode = in_array('--evals', $arguments, true);
         self::$benchmarkFilter = $this->benchmarkFilter($arguments);
+
+        if (self::$evalMode && $this->hasParallelArgument($arguments)) {
+            throw new InvalidArgumentException('AI benchmarks do not support parallel execution; remove [--parallel] or [-p].');
+        }
     }
 
     /**
@@ -62,7 +73,29 @@ final class Plugin implements HandlesArguments, HandlesOriginalArguments
     public static function isEvalMode(): bool
     {
         return self::$evalMode
-            || ($_SERVER[self::EVAL_MODE_ENV] ?? $_ENV[self::EVAL_MODE_ENV] ?? null) === '1';
+            || ($_SERVER[self::EVAL_MODE_ENV] ?? $_ENV[self::EVAL_MODE_ENV] ?? null) === '1'
+            || Parallel::getGlobal(self::EVAL_MODE_ENV) === true
+            || (class_exists(\Pest\Evals\Plugin::class) && \Pest\Evals\Plugin::isEvalMode());
+    }
+
+    public function terminate(): void
+    {
+        ExecutionRecorder::flush();
+    }
+
+    public function addOutput(int $exitCode): int
+    {
+        $output = Container::getInstance()->get(OutputInterface::class);
+
+        if ($output instanceof OutputInterface) {
+            $reporter = new TerminalReporter;
+
+            foreach (ExecutionRecorder::flush() as $scorecard) {
+                $output->write(PHP_EOL.$reporter->render($scorecard));
+            }
+        }
+
+        return $exitCode;
     }
 
     public static function matches(string $description): bool
@@ -109,5 +142,11 @@ final class Plugin implements HandlesArguments, HandlesOriginalArguments
         }
 
         return $filter;
+    }
+
+    /** @param array<int, string> $arguments */
+    private function hasParallelArgument(array $arguments): bool
+    {
+        return in_array('--parallel', $arguments, true) || in_array('-p', $arguments, true);
     }
 }

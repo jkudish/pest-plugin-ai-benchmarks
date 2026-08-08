@@ -27,6 +27,8 @@ function lifecycleScorecard(
     string $caseId = 'case-1',
     string $configuration = 'production',
     string $fingerprint = 'sha256:trial-one',
+    string $measurementFingerprint = 'sha256:measurement-one',
+    ExecutionMode $mode = ExecutionMode::Live,
 ): Scorecard {
     return new Scorecard(
         id: EvidenceId::from('sc_01JRUNSCORECARD', 'sc'),
@@ -50,7 +52,7 @@ function lifecycleScorecard(
                         measurements: [
                             new Measurement(
                                 component: Component::Target,
-                                mode: ExecutionMode::Live,
+                                mode: $mode,
                                 requestedProvider: 'openrouter',
                                 requestedModel: 'model/requested',
                                 effectiveProvider: 'provider',
@@ -60,7 +62,7 @@ function lifecycleScorecard(
                                 retries: 0,
                                 pricingCompleteness: PricingCompleteness::Complete,
                                 pricingSnapshot: ['currency' => 'USD', 'cost' => '0.001'],
-                                fingerprint: 'sha256:measurement-one',
+                                fingerprint: $measurementFingerprint,
                             ),
                         ],
                     ),
@@ -205,4 +207,28 @@ it('stores only stable scorecards as compatible baselines', function (): void {
         ->and(str_contains((string) $contents, 'private model output'))->toBeFalse()
         ->and(fn () => $baseline->assertCompatible(lifecycleScorecard(caseId: 'different')))
         ->toThrow(RuntimeException::class, 'identical case IDs');
+});
+
+it('requires trial and measurement fingerprints to match before baseline comparison', function (): void {
+    $paths = lifecyclePaths();
+    $store = new BaselineStore($paths);
+
+    $store->save('production', lifecycleScorecard());
+    $baseline = $store->load('production');
+
+    expect(fn () => $baseline->assertCompatible(lifecycleScorecard(fingerprint: 'sha256:changed-trial')))
+        ->toThrow(RuntimeException::class, 'compatibility fingerprints')
+        ->and(fn () => $baseline->assertCompatible(lifecycleScorecard(measurementFingerprint: 'sha256:changed-measurement')))
+        ->toThrow(RuntimeException::class, 'compatibility fingerprints');
+});
+
+it('refuses to promote simulated evidence as a baseline', function (): void {
+    $paths = lifecyclePaths();
+
+    expect(fn () => (new BaselineStore($paths))->save(
+        'simulated',
+        lifecycleScorecard(mode: ExecutionMode::Simulated),
+    ))->toThrow(RuntimeException::class, 'Simulated evidence');
+
+    expect(is_dir($paths->baselines))->toBeFalse();
 });

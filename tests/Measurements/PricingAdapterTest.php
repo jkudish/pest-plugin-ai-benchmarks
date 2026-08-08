@@ -42,3 +42,13 @@ it('rejects negative normalized usage', function (): void {
     expect(fn (): NormalizedUsage => new NormalizedUsage(inputTokens: -1))
         ->toThrow(InvalidArgumentException::class, 'Normalized token usage may not be negative.');
 });
+
+it('rejects ambiguous or invalid additional usage units', function (array $units, string $message): void {
+    expect(fn (): NormalizedUsage => new NormalizedUsage(additionalUnits: $units))
+        ->toThrow(InvalidArgumentException::class, $message);
+})->with([
+    'reserved unit' => [['input_tokens' => 1], 'unique, non-empty'],
+    'empty unit' => [['' => 1], 'unique, non-empty'],
+    'negative unit' => [['images' => -1], 'non-negative'],
+    'unsafe float string' => [['audio_seconds' => 'NaN'], 'non-negative'],
+]);

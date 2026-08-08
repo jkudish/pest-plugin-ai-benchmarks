@@ -22,6 +22,7 @@ concurrency:
 
 jobs:
   test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     strategy:
@@ -29,19 +30,25 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         php: [8.5, 8.4]
-        laravel: [13.*, 12.*]
         stability: [prefer-lowest, prefer-stable]
-        include:
-          - laravel: 13.*
-            testbench: 11.*
-          - laravel: 12.*
-            testbench: 10.*
 
-    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.os }}
+    name: P${{ matrix.php }} - L13 - ${{ matrix.stability }} - ${{ matrix.os }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          path: pest-plugin-ai-benchmarks
+          persist-credentials: false
+
+      - name: Checkout private pricing package
+        uses: actions/checkout@v7
+        with:
+          repository: jkudish/laravel-ai-pricing
+          ref: build/pricing-package-v0.1
+          token: ${{ secrets.PRIVATE_PACKAGE_TOKEN }}
+          path: laravel-ai-pricing
+          persist-credentials: false
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -51,17 +58,21 @@ jobs:
           coverage: none
 
       - name: Setup problem matchers
+        working-directory: pest-plugin-ai-benchmarks
         run: |
           echo "::add-matcher::${{ runner.tool_cache }}/php.json"
           echo "::add-matcher::${{ runner.tool_cache }}/phpunit.json"
 
       - name: Install dependencies
+        working-directory: pest-plugin-ai-benchmarks
         run: |
-          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
+          composer require "laravel/framework:^13.23" "orchestra/testbench:^11.1" --no-interaction --no-update
           composer update --${{ matrix.stability }} --prefer-dist --no-interaction
 
       - name: List Installed Dependencies
+        working-directory: pest-plugin-ai-benchmarks
         run: composer show -D
 
       - name: Execute tests
+        working-directory: pest-plugin-ai-benchmarks
         run: vendor/bin/pest --ci

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Jkudish\PestAiBenchmarks\Results;
 
 use InvalidArgumentException;
-use JsonException;
 
 final readonly class OpaqueContext
 {
@@ -14,6 +13,8 @@ final readonly class OpaqueContext
     public const int MAX_KEYS = 100;
 
     public const int MAX_DEPTH = 5;
+
+    public const int MAX_STRING_BYTES = 4_096;
 
     /** @var array<string, mixed> */
     private array $values;
@@ -25,34 +26,17 @@ final readonly class OpaqueContext
             throw new InvalidArgumentException('Opaque context must be a JSON object.');
         }
 
-        $normalized = [];
-
-        foreach ($values as $key => $value) {
-            if (! is_string($key)) {
-                throw new InvalidArgumentException('Opaque context root keys must be strings.');
-            }
-
-            $normalized[$key] = $value;
-        }
-
-        $keyCount = 0;
-        $this->validate($normalized, 1, $keyCount);
-
-        if ($keyCount > self::MAX_KEYS) {
-            throw new InvalidArgumentException('Opaque context contains too many keys.');
-        }
-
         try {
-            $json = json_encode($normalized, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        } catch (JsonException $exception) {
-            throw new InvalidArgumentException('Opaque context must be JSON-safe.', previous: $exception);
+            $this->values = StableEvidenceSanitizer::object(
+                value: $this->record($values),
+                maxDepth: self::MAX_DEPTH,
+                maxEntries: self::MAX_KEYS,
+                maxBytes: self::MAX_BYTES,
+                maxStringBytes: self::MAX_STRING_BYTES,
+            );
+        } catch (InvalidArgumentException $exception) {
+            throw new InvalidArgumentException(str_replace('Stable evidence context', 'Opaque context', $exception->getMessage()), previous: $exception);
         }
-
-        if (strlen($json) > self::MAX_BYTES) {
-            throw new InvalidArgumentException('Opaque context exceeds the maximum encoded size.');
-        }
-
-        $this->values = $normalized;
     }
 
     /** @return array<string, mixed> */
@@ -61,27 +45,22 @@ final readonly class OpaqueContext
         return $this->values;
     }
 
-    private function validate(mixed $value, int $depth, int &$keyCount): void
+    /**
+     * @param  array<mixed>  $values
+     * @return array<string, mixed>
+     */
+    private function record(array $values): array
     {
-        if ($depth > self::MAX_DEPTH) {
-            throw new InvalidArgumentException('Opaque context exceeds the maximum nesting depth.');
+        $record = [];
+
+        foreach ($values as $key => $value) {
+            if (! is_string($key)) {
+                throw new InvalidArgumentException('Opaque context root keys must be strings.');
+            }
+
+            $record[$key] = $value;
         }
 
-        if (is_float($value) && ! is_finite($value)) {
-            throw new InvalidArgumentException('Opaque context must contain finite numeric values.');
-        }
-
-        if (is_scalar($value) || $value === null) {
-            return;
-        }
-
-        if (! is_array($value)) {
-            throw new InvalidArgumentException('Opaque context must contain only JSON-safe values.');
-        }
-
-        foreach ($value as $item) {
-            $keyCount++;
-            $this->validate($item, $depth + 1, $keyCount);
-        }
+        return $record;
     }
 }

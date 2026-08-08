@@ -11,8 +11,6 @@ final class PestAiBenchmarksServiceProvider extends PackageServiceProvider
 {
     public function configurePackage(Package $package): void
     {
-        $package
-            ->name('pest-plugin-ai-benchmarks')
-            ->hasConfigFile();
+        $package->name('pest-plugin-ai-benchmarks');
     }
 }

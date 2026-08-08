@@ -12,7 +12,7 @@ use Jkudish\PestAiBenchmarks\Scorecards\Result;
 use Jkudish\PestAiBenchmarks\Scorecards\Scorecard;
 use Jkudish\PestAiBenchmarks\Scorecards\Trial;
 
-function scorecardFixture(?OpaqueContext $context = null): Scorecard
+function scorecardFixture(?OpaqueContext $context = null, ?string $reasoning = 'All required fields matched.'): Scorecard
 {
     return new Scorecard(
         id: EvidenceId::from('sc_01JTESTSCORECARD', 'sc'),
@@ -31,7 +31,7 @@ function scorecardFixture(?OpaqueContext $context = null): Scorecard
                         id: EvidenceId::from('res_01JTESTRESULT', 'res'),
                         scorer: 'receipt-fields',
                         score: 0.95,
-                        reasoning: 'All required fields matched.',
+                        reasoning: $reasoning,
                         passed: true,
                         measurements: [
                             new Measurement(
@@ -115,6 +115,18 @@ it('keeps private raw evaluation material out of stable scorecards', function ()
         ->and(str_contains($json, '"expected":'))->toBeFalse();
 });
 
+it('sanitizes and bounds scorer reasoning before serialization', function (): void {
+    $reasoning = 'Bearer private-token sk-1234567890abcdefgh '.str_repeat('é', Result::MAX_REASONING_BYTES);
+    $serialized = scorecardFixture(reasoning: $reasoning)->toArray();
+    $stableReasoning = $serialized['trials'][0]['results'][0]['reasoning'];
+
+    expect($stableReasoning)->toBeString()
+        ->and($stableReasoning)->not->toContain('private-token')
+        ->and($stableReasoning)->not->toContain('sk-1234567890abcdefgh')
+        ->and(strlen($stableReasoning))->toBeLessThanOrEqual(Result::MAX_REASONING_BYTES)
+        ->and(mb_check_encoding($stableReasoning, 'UTF-8'))->toBeTrue();
+});
+
 it('bundles a JSON Schema 2020-12 contract matching the serializer version', function (): void {
     $contents = file_get_contents(dirname(__DIR__, 2).'/resources/schema/scorecard.schema.json');
 
@@ -127,5 +139,6 @@ it('bundles a JSON Schema 2020-12 contract matching the serializer version', fun
         ->and($schema['properties']['schema_url']['const'])->toBe(Scorecard::SCHEMA_URL)
         ->and($schema['properties']['schema_version']['const'])->toBe(Scorecard::SCHEMA_VERSION)
         ->and($schema['properties']['context']['maxProperties'])->toBe(OpaqueContext::MAX_KEYS)
+        ->and($schema['$defs']['result']['properties']['reasoning']['maxLength'])->toBe(Result::MAX_REASONING_BYTES)
         ->and($schema['additionalProperties'])->toBeFalse();
 });
