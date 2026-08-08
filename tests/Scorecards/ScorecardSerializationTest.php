@@ -83,9 +83,11 @@ it('serializes the stable scorecard contract exactly', function (): void {
     ]));
 
     $golden = file_get_contents(__DIR__.'/Fixtures/scorecard.v0.1.json');
+    $serialized = $scorecard->toJson();
 
     expect($golden)->not->toBeFalse()
-        ->and($scorecard->toJson())->toBe($golden);
+        ->and($serialized)->not->toContain("\r\n")
+        ->and($serialized)->toBe(str_replace("\r\n", "\n", (string) $golden));
 });
 
 it('derives source relationships and omits optional context by default', function (): void {
