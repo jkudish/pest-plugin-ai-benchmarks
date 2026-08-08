@@ -1,84 +1,66 @@
-# A Pest plugin for comparative AI benchmarks, durable evidence, replay, and baselines.
+# Pest AI Benchmarks
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/jkudish/pest-plugin-ai-benchmarks.svg?style=flat-square)](https://packagist.org/packages/jkudish/pest-plugin-ai-benchmarks)
-[![GitHub Tests Action Status](https://github.com/spatie/package-pest-plugin-ai-benchmarks-laravel/actions/workflows/run-tests.yml/badge.svg)](https://github.com/jkudish/pest-plugin-ai-benchmarks/actions?query=workflow%3Arun-tests+branch%3Amain)
-[![GitHub Code Style Action Status](https://github.com/spatie/package-pest-plugin-ai-benchmarks-laravel/actions/workflows/fix-php-code-style-issues.yml/badge.svg)](https://github.com/jkudish/pest-plugin-ai-benchmarks/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
-[![Total Downloads](https://img.shields.io/packagist/dt/jkudish/pest-plugin-ai-benchmarks.svg?style=flat-square)](https://packagist.org/packages/jkudish/pest-plugin-ai-benchmarks)
+Comparative AI benchmarks for Laravel applications, built on Pest 5 and Pest Evals. The plugin preserves Pest's datasets, expectations, repetitions, filtering, and failure behavior while adding named model/application configurations and durable benchmark evidence.
 
-This is where your description should go. Limit it to a paragraph or two. Consider adding a small example.
+> This package is under private pre-release validation and is not yet published.
 
-## Support us
+## Requirements
 
-[<img src="https://github-ads.s3.eu-central-1.amazonaws.com/pest-plugin-ai-benchmarks.jpg?t=1" width="419px" />](https://spatie.be/github-ad-click/pest-plugin-ai-benchmarks)
+- PHP 8.4 or newer
+- Laravel 12 or 13
+- Pest 5
+- Pest Evals 5
 
-We invest a lot of resources into creating [best in class open source packages](https://spatie.be/open-source). You can support us by [buying one of our paid products](https://spatie.be/open-source/support-us).
-
-We highly appreciate you sending us a postcard from your hometown, mentioning which of our package(s) you are using. You'll find our address on [our contact page](https://spatie.be/about-us). We publish all received postcards on [our virtual postcard wall](https://spatie.be/open-source/postcards).
-
-## Installation
-
-You can install the package via composer:
-
-```bash
-composer require jkudish/pest-plugin-ai-benchmarks
-```
-
-You can publish and run the migrations with:
-
-```bash
-php artisan vendor:publish --tag="pest-plugin-ai-benchmarks-migrations"
-php artisan migrate
-```
-
-You can publish the config file with:
-
-```bash
-php artisan vendor:publish --tag="pest-plugin-ai-benchmarks-config"
-```
-
-This is the contents of the published config file:
+## Example
 
 ```php
-return [
-];
+use Jkudish\PestAiBenchmarks\Configuration;
+
+benchmark('extracts receipts', function (array $case): void {
+    $result = app(ReceiptOcrService::class)->extract($case['file']);
+
+    expect($result)
+        ->merchant_name->toBe($case['expected']['merchant_name'])
+        ->total_amount->toBe($case['expected']['total_amount']);
+})
+    ->with('receipt corpus')
+    ->configurations([
+        'production' => Configuration::production(),
+        'gemini-flash' => Configuration::model(
+            provider: 'openrouter',
+            model: 'google/gemini-3-flash',
+        ),
+        'new-prompt' => Configuration::settings([
+            'receipt_ocr.prompt' => 'receipt-ocr-v2',
+        ]),
+    ])
+    ->repeat(3);
 ```
 
-Optionally, you can publish the views using
+`benchmark()` is the only benchmark declaration form. The package does not provide competing scorer, judge, sampling, case, target, candidate, or variant APIs.
 
-```bash
-php artisan vendor:publish --tag="pest-plugin-ai-benchmarks-views"
-```
+## Current foundation
 
-## Usage
+- Pest-native benchmark and configuration expansion
+- Scoped Laravel model and application configuration
+- Requested/effective model evidence
+- Monotonic latency and normalized usage seams
+- Shared `jkudish/laravel-ai-pricing` integration
+- Versioned JSON Schema 2020-12 scorecards
+- Stable scorecard, execution, trial, and result identities
+- Bounded opaque correlation context
 
-```php
-$pestAiBenchmarks = new Jkudish\PestAiBenchmarks();
-echo $pestAiBenchmarks->echoPhrase('Hello, Jkudish!');
-```
+Replay, resume, baselines, regression gates, and complete native scorer capture are still under development for version 0.1.
 
-## Testing
+## Development
 
 ```bash
 composer test
+composer analyse
+composer validate --strict
+composer audit
 ```
-
-## Changelog
-
-Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed recently.
-
-## Contributing
-
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
-
-## Security Vulnerabilities
-
-Please review [our security policy](../../security/policy) on how to report security vulnerabilities.
-
-## Credits
-
-- [Joey Kudish](https://github.com/jkudish)
-- [All Contributors](../../contributors)
 
 ## License
 
-The MIT License (MIT). Please see [License File](LICENSE.md) for more information.
+MIT. See [LICENSE.md](LICENSE.md).

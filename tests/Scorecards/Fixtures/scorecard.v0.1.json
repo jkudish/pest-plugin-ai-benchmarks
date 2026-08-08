@@ -1,0 +1,86 @@
+{
+    "schema_url": "https://raw.githubusercontent.com/jkudish/pest-plugin-ai-benchmarks/v0.1.0/resources/schema/scorecard.schema.json",
+    "schema_version": "0.1.0",
+    "package": {
+        "name": "jkudish/pest-plugin-ai-benchmarks",
+        "version": "0.1.0"
+    },
+    "scorecard_id": "sc_01JTESTSCORECARD",
+    "execution_id": "exec_01JTESTEXECUTION",
+    "benchmark": "receipt OCR",
+    "created_at": "2026-08-07T20:30:00.000000Z",
+    "trials": [
+        {
+            "trial_id": "trial_01JTESTTRIAL",
+            "source": {
+                "scorecard_id": "sc_01JTESTSCORECARD",
+                "execution_id": "exec_01JTESTEXECUTION"
+            },
+            "case_id": "uber-complex-001",
+            "configuration": "gemini-flash",
+            "repeat": 1,
+            "fingerprint": "sha256:trial-fixture",
+            "results": [
+                {
+                    "result_id": "res_01JTESTRESULT",
+                    "source": {
+                        "scorecard_id": "sc_01JTESTSCORECARD",
+                        "execution_id": "exec_01JTESTEXECUTION",
+                        "trial_id": "trial_01JTESTTRIAL"
+                    },
+                    "scorer": "receipt-fields",
+                    "score": 0.95,
+                    "reasoning": "All required fields matched.",
+                    "passed": true,
+                    "measurements": [
+                        {
+                            "component": "target",
+                            "mode": "live",
+                            "requested_model": {
+                                "provider": "openrouter",
+                                "model": "google/gemini-2.5-flash"
+                            },
+                            "effective_model": {
+                                "provider": "google",
+                                "model": "gemini-2.5-flash-001"
+                            },
+                            "latency_ms": 812.4,
+                            "usage": {
+                                "input_tokens": 1000,
+                                "output_tokens": 200
+                            },
+                            "retries": 1,
+                            "pricing": {
+                                "completeness": "complete",
+                                "snapshot": {
+                                    "cost": "0.000800",
+                                    "currency": "USD",
+                                    "source": "provider_native"
+                                }
+                            },
+                            "fingerprint": "sha256:target-fixture"
+                        },
+                        {
+                            "component": "judge",
+                            "mode": "recorded",
+                            "requested_model": null,
+                            "effective_model": null,
+                            "latency_ms": 0,
+                            "usage": {},
+                            "retries": 0,
+                            "pricing": {
+                                "completeness": "unavailable",
+                                "snapshot": {}
+                            },
+                            "fingerprint": "sha256:judge-fixture"
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "context": {
+        "trace_id": "trace-456",
+        "work_ref": "task-123"
+    }
+}
