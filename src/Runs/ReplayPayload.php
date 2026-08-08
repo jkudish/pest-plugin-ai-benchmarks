@@ -63,7 +63,7 @@ final readonly class ReplayPayload
         return json_encode(
             $this->toArray(),
             JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
-        ).PHP_EOL;
+        )."\n";
     }
 
     private function redact(mixed $value, ?string $key = null): mixed

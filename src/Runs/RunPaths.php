@@ -23,6 +23,10 @@ final readonly class RunPaths
         $separator = self::separator($projectRoot);
         $root = rtrim($projectRoot, '/\\');
 
+        if ($separator === '\\') {
+            $root = str_replace('/', '\\', $root);
+        }
+
         return new self(
             runs: implode($separator, [$root, 'storage', 'app', 'ai-evals', 'runs']),
             baselines: implode($separator, [$root, 'tests', 'Evals', 'Baselines']),

@@ -96,6 +96,8 @@ it('uses conventional local run and baseline paths', function (): void {
 it('supports Windows drive and UNC project paths', function (): void {
     expect(RunPaths::forProject('C:\\projects\\example')->runs)
         ->toBe('C:\\projects\\example\\storage\\app\\ai-evals\\runs')
+        ->and(RunPaths::forProject('C:\\projects/example')->runs)
+        ->toBe('C:\\projects\\example\\storage\\app\\ai-evals\\runs')
         ->and(RunPaths::forProject('\\\\server\\share\\example')->baselines)
         ->toBe('\\\\server\\share\\example\\tests\\Evals\\Baselines');
 });
@@ -119,8 +121,11 @@ it('publishes a sanitized scorecard and private replay as one run bundle', funct
         ->and(str_contains((string) $stable, 'private model output'))->toBeFalse()
         ->and(str_contains((string) $private, 'private model output'))->toBeTrue()
         ->and(str_contains((string) $private, 'Bearer secret'))->toBeFalse()
-        ->and(str_contains((string) $private, '[REDACTED]'))->toBeTrue()
-        ->and(fileperms($run.'/'.RunBundle::REPLAY_FILE) & 0777)->toBe(0600);
+        ->and(str_contains((string) $private, '[REDACTED]'))->toBeTrue();
+
+    if (DIRECTORY_SEPARATOR === '/') {
+        expect(fileperms($run.'/'.RunBundle::REPLAY_FILE) & 0777)->toBe(0600);
+    }
 });
 
 it('exposes stored outputs only through the replay callback', function (): void {
@@ -200,7 +205,7 @@ it('stores only stable scorecards as compatible baselines', function (): void {
     $baseline = $store->load('production');
     $baseline->assertCompatible($scorecard);
 
-    $files = glob($paths->baselines.'/*');
+    $files = glob($paths->baselines.DIRECTORY_SEPARATOR.'*');
     $contents = file_get_contents($paths->baseline('production'));
 
     expect($files)->toBe([$paths->baseline('production')])
