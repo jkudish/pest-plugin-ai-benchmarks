@@ -37,11 +37,19 @@ benchmark('extracts receipts', function (array $case): void {
     ->repeat(3);
 ```
 
+Benchmarks are skipped during ordinary Pest runs before their test bodies execute. Run all benchmarks explicitly through Pest Evals, or select one by name:
+
+```bash
+./vendor/bin/pest --evals
+./vendor/bin/pest --evals --benchmark='extracts receipts'
+```
+
 `benchmark()` is the only benchmark declaration form. The package does not provide competing scorer, judge, sampling, case, target, candidate, or variant APIs.
 
 ## Current foundation
 
 - Pest-native benchmark and configuration expansion
+- Explicit `--evals` safety gating and benchmark-name filtering
 - Scoped Laravel model and application configuration
 - Requested/effective model evidence
 - Monotonic latency and normalized usage seams

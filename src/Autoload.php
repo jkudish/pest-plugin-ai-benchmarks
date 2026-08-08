@@ -6,6 +6,8 @@ use Jkudish\PestAiBenchmarks\BenchmarkCall;
 use Jkudish\PestAiBenchmarks\Comparisons\DeclarationContext;
 use Jkudish\PestAiBenchmarks\Comparisons\DeclarationRegistry;
 use Jkudish\PestAiBenchmarks\Configuration;
+use Jkudish\PestAiBenchmarks\Plugin;
+use PHPUnit\Framework\Assert;
 
 if (! function_exists('benchmark')) {
     /**
@@ -17,6 +19,10 @@ if (! function_exists('benchmark')) {
     {
         $declarationContext = new DeclarationContext;
         $testCall = test($description, function () use ($declarationContext, $test): mixed {
+            if (! Plugin::isEvalMode()) {
+                Assert::markTestSkipped('Benchmark skipped. Run with [--evals] to execute production-path benchmarks.');
+            }
+
             $arguments = func_get_args();
 
             return DeclarationRegistry::within($declarationContext, function () use ($arguments, $test): mixed {
@@ -33,6 +39,12 @@ if (! function_exists('benchmark')) {
             });
         });
 
-        return new BenchmarkCall($testCall, $declarationContext);
+        $call = new BenchmarkCall($testCall, $declarationContext);
+
+        if (! Plugin::matches($description)) {
+            $call->skip('Benchmark does not match the active [--benchmark] filter.');
+        }
+
+        return $call;
     }
 }

@@ -10,6 +10,7 @@ use Jkudish\LaravelAiPricing\ValueObjects\ModelIdentity;
 use Jkudish\LaravelAiPricing\ValueObjects\PricingObservation;
 use Jkudish\LaravelAiPricing\ValueObjects\Usage;
 
+/** @implements PricingAdapter<CostQuote> */
 final readonly class LaravelAiPricingAdapter implements PricingAdapter
 {
     public function __construct(private CostResolver $resolver) {}

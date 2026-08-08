@@ -65,6 +65,23 @@ final readonly class BaselineStore
             throw new RuntimeException("Baseline [{$name}] is not a stable scorecard.");
         }
 
-        return new Baseline($scorecard);
+        return new Baseline($this->record($scorecard));
+    }
+
+    /**
+     * @param  array<mixed>  $value
+     * @return array<string, mixed>
+     */
+    private function record(array $value): array
+    {
+        $record = [];
+
+        foreach ($value as $key => $item) {
+            if (is_string($key)) {
+                $record[$key] = $item;
+            }
+        }
+
+        return $record;
     }
 }

@@ -52,6 +52,8 @@ final readonly class ResumeReader
                 continue;
             }
 
+            $trial = $this->record($trial);
+
             if (($trial['fingerprint'] ?? null) !== $fingerprint) {
                 throw new RuntimeException('Completed trial fingerprint does not match the requested execution.');
             }
@@ -114,5 +116,22 @@ final readonly class ResumeReader
         }
 
         return $run;
+    }
+
+    /**
+     * @param  array<mixed>  $value
+     * @return array<string, mixed>
+     */
+    private function record(array $value): array
+    {
+        $record = [];
+
+        foreach ($value as $key => $item) {
+            if (is_string($key)) {
+                $record[$key] = $item;
+            }
+        }
+
+        return $record;
     }
 }

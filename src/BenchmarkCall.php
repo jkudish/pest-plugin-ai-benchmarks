@@ -21,7 +21,8 @@ use Pest\PendingCalls\TestCall;
  */
 final class BenchmarkCall
 {
-    private const string BENCHMARK_GROUP = '__pest_ai_benchmark';
+    /** @internal */
+    public const string BENCHMARK_GROUP = '__pest_ai_benchmark';
 
     private bool $hasConfigurations = false;
 

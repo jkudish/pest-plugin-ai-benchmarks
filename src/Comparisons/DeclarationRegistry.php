@@ -81,11 +81,11 @@ final class DeclarationRegistry
 
     public static function current(): BenchmarkDeclaration
     {
-        $context = self::$active[array_key_last(self::$active)] ?? null;
-
-        if (! $context instanceof DeclarationContext) {
+        if (self::$active === []) {
             throw new LogicException('No benchmark declaration is active.');
         }
+
+        $context = self::$active[count(self::$active) - 1];
 
         return self::declarations()[$context]
             ?? throw new LogicException('The active benchmark declaration is not registered.');
