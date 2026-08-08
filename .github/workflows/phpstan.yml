@@ -25,7 +25,6 @@ jobs:
         with:
           repository: jkudish/laravel-ai-pricing
           ref: build/pricing-package-v0.1
-          token: ${{ secrets.PRIVATE_PACKAGE_TOKEN }}
           path: laravel-ai-pricing
           persist-credentials: false
 
