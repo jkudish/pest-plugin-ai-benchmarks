@@ -26,12 +26,15 @@ final class Plugin implements AddsOutput, HandlesArguments, HandlesOriginalArgum
     /** @param array<int, string> $arguments */
     public function handleOriginalArguments(array $arguments): void
     {
-        self::$evalMode = in_array('--evals', $arguments, true);
-        self::$benchmarkFilter = $this->benchmarkFilter($arguments);
+        $evalMode = in_array('--evals', $arguments, true);
+        $benchmarkFilter = $this->benchmarkFilter($arguments);
 
-        if (self::$evalMode && $this->hasParallelArgument($arguments)) {
+        if ($evalMode && $this->hasParallelArgument($arguments)) {
             throw new InvalidArgumentException('AI benchmarks do not support parallel execution; remove [--parallel] or [-p].');
         }
+
+        self::$evalMode = $evalMode;
+        self::$benchmarkFilter = $benchmarkFilter;
     }
 
     /**

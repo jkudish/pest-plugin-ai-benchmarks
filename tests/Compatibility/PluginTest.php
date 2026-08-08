@@ -138,3 +138,12 @@ it('rejects parallel benchmark execution', function (string $parallel): void {
     expect(fn () => (new Plugin)->handleOriginalArguments(['pest', '--evals', $parallel]))
         ->toThrow(InvalidArgumentException::class, 'AI benchmarks do not support parallel execution');
 })->with(['--parallel', '-p']);
+
+it('does not enable eval mode when argument validation fails', function (): void {
+    $plugin = new Plugin;
+    $plugin->handleOriginalArguments(['pest']);
+
+    expect(fn () => $plugin->handleOriginalArguments(['pest', '--evals', '--parallel']))
+        ->toThrow(InvalidArgumentException::class, 'AI benchmarks do not support parallel execution')
+        ->and(Plugin::isEvalMode())->toBeFalse();
+});
