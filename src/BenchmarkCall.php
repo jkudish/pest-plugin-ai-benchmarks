@@ -6,6 +6,10 @@ namespace Jkudish\PestAiBenchmarks;
 
 use Closure;
 use InvalidArgumentException;
+use Jkudish\PestAiBenchmarks\Comparisons\DeclarationContext;
+use Jkudish\PestAiBenchmarks\Comparisons\DeclarationRegistry;
+use Jkudish\PestAiBenchmarks\Comparisons\RegressionPolicy;
+use Jkudish\PestAiBenchmarks\Results\OpaqueContext;
 use Pest\PendingCalls\TestCall;
 
 /**
@@ -21,9 +25,12 @@ final class BenchmarkCall
 
     private bool $hasConfigurations = false;
 
-    public function __construct(private readonly TestCall $testCall)
-    {
+    public function __construct(
+        private readonly TestCall $testCall,
+        DeclarationContext $declarationContext,
+    ) {
         $this->testCall->group(self::BENCHMARK_GROUP);
+        DeclarationRegistry::register($this, $declarationContext);
     }
 
     /**
@@ -51,6 +58,38 @@ final class BenchmarkCall
 
         $this->testCall->with($configurations);
         $this->hasConfigurations = true;
+        DeclarationRegistry::setConfigurations($this, array_keys($configurations));
+
+        return $this;
+    }
+
+    /**
+     * @param  array<mixed>  $context
+     */
+    public function context(array $context): self
+    {
+        DeclarationRegistry::setContext($this, new OpaqueContext($context));
+
+        return $this;
+    }
+
+    public function reference(string $configuration): self
+    {
+        if (! $this->hasConfigurations) {
+            throw new InvalidArgumentException('A benchmark reference must be declared after configurations.');
+        }
+
+        DeclarationRegistry::setReference($this, $configuration);
+
+        return $this;
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $thresholds
+     */
+    public function failWhen(array $thresholds): self
+    {
+        DeclarationRegistry::setRegressionPolicy($this, RegressionPolicy::from($thresholds));
 
         return $this;
     }

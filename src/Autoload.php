@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use Jkudish\PestAiBenchmarks\BenchmarkCall;
+use Jkudish\PestAiBenchmarks\Comparisons\DeclarationContext;
+use Jkudish\PestAiBenchmarks\Comparisons\DeclarationRegistry;
 use Jkudish\PestAiBenchmarks\Configuration;
 
 if (! function_exists('benchmark')) {
@@ -13,20 +15,24 @@ if (! function_exists('benchmark')) {
      */
     function benchmark(string $description, Closure $test): BenchmarkCall
     {
-        $testCall = test($description, function () use ($test): mixed {
+        $declarationContext = new DeclarationContext;
+        $testCall = test($description, function () use ($declarationContext, $test): mixed {
             $arguments = func_get_args();
 
-            foreach ($arguments as $index => $argument) {
-                if ($argument instanceof Configuration) {
-                    unset($arguments[$index]);
+            return DeclarationRegistry::within($declarationContext, function () use ($arguments, $test): mixed {
 
-                    break;
+                foreach ($arguments as $index => $argument) {
+                    if ($argument instanceof Configuration) {
+                        unset($arguments[$index]);
+
+                        break;
+                    }
                 }
-            }
 
-            return $test->call($this, ...array_values($arguments));
+                return $test->call($this, ...array_values($arguments));
+            });
         });
 
-        return new BenchmarkCall($testCall);
+        return new BenchmarkCall($testCall, $declarationContext);
     }
 }
