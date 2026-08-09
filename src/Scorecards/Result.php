@@ -11,6 +11,8 @@ use Jkudish\PestAiBenchmarks\Results\StableEvidenceSanitizer;
 /** @internal */
 final readonly class Result
 {
+    public const int MAX_SCORER_BYTES = 512;
+
     public const int MAX_REASONING_BYTES = 8_192;
 
     public ?string $reasoning;
@@ -23,6 +25,9 @@ final readonly class Result
         ?string $reasoning,
         public ?bool $passed,
         public array $measurements,
+        public ?float $threshold = null,
+        public ?int $sample = null,
+        public ?int $samples = null,
     ) {
         EvidenceId::from($this->id->value, 'res');
 
@@ -32,6 +37,15 @@ final readonly class Result
 
         if ($this->score !== null && (! is_finite($this->score) || $this->score < 0 || $this->score > 1)) {
             throw new InvalidArgumentException('Result score must be between 0.0 and 1.0.');
+        }
+
+        if ($this->threshold !== null && (! is_finite($this->threshold) || $this->threshold < 0 || $this->threshold > 1)) {
+            throw new InvalidArgumentException('Result threshold must be between 0.0 and 1.0.');
+        }
+
+        if (($this->sample === null) !== ($this->samples === null)
+            || $this->sample !== null && ($this->sample < 1 || $this->samples < $this->sample)) {
+            throw new InvalidArgumentException('Result sample position and count must be valid and supplied together.');
         }
 
         if ($this->measurements === []) {
@@ -51,10 +65,13 @@ final readonly class Result
                 'execution_id' => $executionId->value,
                 'trial_id' => $trialId->value,
             ],
-            'scorer' => $this->scorer,
+            'scorer' => StableEvidenceSanitizer::text($this->scorer, self::MAX_SCORER_BYTES),
             'score' => $this->score,
             'reasoning' => $this->reasoning,
+            'threshold' => $this->threshold,
             'passed' => $this->passed,
+            'sample' => $this->sample,
+            'samples' => $this->samples,
             'measurements' => array_map(
                 fn (Measurement $measurement): array => $measurement->toArray(),
                 $this->measurements,

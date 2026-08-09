@@ -20,26 +20,32 @@ final readonly class BenchmarkDeclaration
         public ?string $reference = null,
         public ?OpaqueContext $context = null,
         public ?RegressionPolicy $regressionPolicy = null,
+        public int $repetitions = 1,
     ) {}
 
     /** @param array<string, Configuration> $configurations */
     public function withConfigurations(array $configurations): self
     {
-        return new self(array_keys($configurations), $configurations, $this->reference, $this->context, $this->regressionPolicy);
+        return new self(array_keys($configurations), $configurations, $this->reference, $this->context, $this->regressionPolicy, $this->repetitions);
     }
 
     public function withReference(string $reference): self
     {
-        return new self($this->configurations, $this->configurationValues, $reference, $this->context, $this->regressionPolicy);
+        return new self($this->configurations, $this->configurationValues, $reference, $this->context, $this->regressionPolicy, $this->repetitions);
     }
 
     public function withContext(OpaqueContext $context): self
     {
-        return new self($this->configurations, $this->configurationValues, $this->reference, $context, $this->regressionPolicy);
+        return new self($this->configurations, $this->configurationValues, $this->reference, $context, $this->regressionPolicy, $this->repetitions);
     }
 
     public function withRegressionPolicy(RegressionPolicy $regressionPolicy): self
     {
-        return new self($this->configurations, $this->configurationValues, $this->reference, $this->context, $regressionPolicy);
+        return new self($this->configurations, $this->configurationValues, $this->reference, $this->context, $regressionPolicy, $this->repetitions);
+    }
+
+    public function withRepetitions(int $repetitions): self
+    {
+        return new self($this->configurations, $this->configurationValues, $this->reference, $this->context, $this->regressionPolicy, $repetitions);
     }
 }

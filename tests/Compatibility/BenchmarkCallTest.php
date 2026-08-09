@@ -23,8 +23,7 @@ benchmark('uses native Pest Cartesian datasets and hides configurations', functi
     ]);
 
 benchmark('retains native Pest repetition semantics', function (): void {
-    expect(func_get_args())->toHaveCount(1)
-        ->and(func_get_arg(0))->toBeInt()->toBeGreaterThanOrEqual(1)->toBeLessThanOrEqual(2);
+    expect(func_get_args())->toHaveCount(0);
 })
     ->configurations([
         'production' => Configuration::production(),

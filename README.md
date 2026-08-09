@@ -9,7 +9,7 @@ Comparative AI benchmarks for Laravel applications, built on Pest 5 and Pest Eva
 - PHP 8.4 or newer
 - Laravel 13 for the standard Pest Laravel integration
 - Pest 5
-- Pest Evals 5
+- Pest Evals 5 with the scorer-result callback proposed in `pestphp/pest-plugin-evals#4`
 
 The package keeps Illuminate 12-compatible contracts so applications with a custom test bootstrap are not needlessly excluded. However, `pestphp/pest-plugin-laravel` 5 currently requires Laravel 13.23 or newer, so the conventional Laravel 12 + Pest Laravel plugin combination cannot be supported or tested until that upstream constraint changes.
 
@@ -74,7 +74,27 @@ beforeEach(function (): void {
 
 Production configurations can run without a scope. Model or application-setting overrides fail before the benchmark body when no scope is bound, preventing a requested model from being reported when it never affected execution.
 
-Successful eval-mode runs write a sanitized `scorecard.json` and private, redacted `replay.private.json` beneath `storage/app/ai-evals/runs/`. Requested and effective model identities are recorded independently. Runtime evidence is conservatively marked `simulated` until a truthful live/fake integration signal exists, so these early artifacts cannot be promoted as baselines.
+### Laravel AI observations
+
+Add the benchmark middleware to an eval-only subclass of your production Laravel AI agent. The production agent remains unchanged, while benchmark calls record the resolved request, provider response, token usage, latency, and failed fallback attempts:
+
+```php
+use App\Ai\Agents\ReceiptOcrAgent;
+use Jkudish\PestAiBenchmarks\LaravelAi\BenchmarkAgentMiddleware;
+use Laravel\Ai\Contracts\HasMiddleware;
+
+final class BenchmarkReceiptOcrAgent extends ReceiptOcrAgent implements HasMiddleware
+{
+    public function middleware(): array
+    {
+        return [new BenchmarkAgentMiddleware];
+    }
+}
+```
+
+The middleware is inert outside an active `benchmark()` body. Real calls made through an instrumented agent are recorded as `live`; Laravel AI fake-gateway calls and uninstrumented benchmark bodies remain `simulated` and cannot be promoted as baselines. Runtime response metadata is authoritative for the effective provider and model, even when it differs from the requested configuration. Pricing is calculated from normalized usage through `jkudish/laravel-ai-pricing`; Laravel AI does not currently expose provider-reported OpenRouter cost.
+
+Completed and failed scorer eval runs write a recursively sanitized, bounded `scorecard.json` and private, redacted `replay.private.json` beneath `storage/app/ai-evals/runs/`. Requested and effective model identities are recorded independently. Stable scorecards exclude scorer inputs, expected values, prompts, and outputs; private replay retains the output needed to rerun scorers.
 
 ## Current foundation
 
@@ -82,7 +102,7 @@ Successful eval-mode runs write a sanitized `scorecard.json` and private, redact
 - Explicit `--evals` safety gating and benchmark-name filtering
 - Scoped Laravel model and application configuration
 - Requested/effective model evidence
-- Monotonic latency and normalized usage seams
+- Live Laravel AI identity, latency, usage, failure, and fallback observations
 - Shared `jkudish/laravel-ai-pricing` integration
 - Versioned JSON Schema 2020-12 scorecards
 - Stable scorecard, execution, trial, and result identities
@@ -90,7 +110,7 @@ Successful eval-mode runs write a sanitized `scorecard.json` and private, redact
 - Durable run bundles for successful and failed benchmark bodies
 - Explicit rejection of unsupported parallel benchmark execution
 
-Replay, resume, baseline, and regression primitives are present but are not yet wired to their final CLI lifecycle. Complete native Pest Evals scorer capture remains gated on the upstream result-event hook.
+Replay, resume, baseline, and regression primitives are present but are not yet wired to their final CLI lifecycle. This private release candidate uses the existing `dev-add-scorer-result-callbacks` fork branch for native Pest Evals scorer evidence. A stable release remains gated on that callback landing upstream and being available in a compatible Pest Evals release; the plugin does not duplicate Pest's scoring API.
 
 ## Development
 

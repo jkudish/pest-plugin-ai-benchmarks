@@ -31,7 +31,10 @@
                     "scorer": "receipt-fields",
                     "score": 0.95,
                     "reasoning": "All required fields matched.",
+                    "threshold": 0.9,
                     "passed": true,
+                    "sample": 1,
+                    "samples": 3,
                     "measurements": [
                         {
                             "component": "target",

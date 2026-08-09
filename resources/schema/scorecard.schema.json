@@ -97,7 +97,7 @@
         "result": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["result_id", "source", "scorer", "score", "reasoning", "passed", "measurements"],
+            "required": ["result_id", "source", "scorer", "score", "reasoning", "threshold", "passed", "sample", "samples", "measurements"],
             "properties": {
                 "result_id": {"$ref": "#/$defs/resultId"},
                 "source": {
@@ -110,10 +110,13 @@
                         "trial_id": {"$ref": "#/$defs/trialId"}
                     }
                 },
-                "scorer": {"type": "string", "minLength": 1},
+                "scorer": {"type": "string", "minLength": 1, "maxLength": 512},
                 "score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
                 "reasoning": {"type": ["string", "null"], "maxLength": 8192},
+                "threshold": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
                 "passed": {"type": ["boolean", "null"]},
+                "sample": {"type": ["integer", "null"], "minimum": 1},
+                "samples": {"type": ["integer", "null"], "minimum": 1},
                 "measurements": {
                     "type": "array",
                     "minItems": 1,

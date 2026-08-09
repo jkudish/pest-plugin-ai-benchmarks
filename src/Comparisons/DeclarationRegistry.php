@@ -74,6 +74,11 @@ final class DeclarationRegistry
         self::declarations()[self::context($call)] = $declaration->withRegressionPolicy($regressionPolicy);
     }
 
+    public static function setRepetitions(BenchmarkCall $call, int $repetitions): void
+    {
+        self::declarations()[self::context($call)] = self::get($call)->withRepetitions($repetitions);
+    }
+
     public static function get(BenchmarkCall $call): BenchmarkDeclaration
     {
         return self::declarations()[self::context($call)]

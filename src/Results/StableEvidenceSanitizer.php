@@ -20,6 +20,7 @@ final class StableEvidenceSanitizer
 
     private const string OPENAI_TOKEN_PATTERN = '/\bsk-[A-Za-z0-9_-]{12,}\b/';
 
+    /** @return ($value is null ? null : string) */
     public static function text(?string $value, int $maxBytes): ?string
     {
         if ($value === null) {
@@ -117,13 +118,23 @@ final class StableEvidenceSanitizer
                 throw new InvalidArgumentException('Stable evidence context root keys must be non-empty strings.');
             }
 
+            $sanitizedKey = is_string($key) ? self::text($key, $maxStringBytes) : $key;
+
+            if ($root && $sanitizedKey === '') {
+                throw new InvalidArgumentException('Stable evidence context root keys must be non-empty strings.');
+            }
+
+            if (array_key_exists($sanitizedKey, $sanitized)) {
+                throw new InvalidArgumentException('Stable evidence context contains duplicate normalized keys.');
+            }
+
             $entries++;
 
             if ($entries > $maxEntries) {
                 throw new InvalidArgumentException('Stable evidence context contains too many keys or list entries.');
             }
 
-            $sanitized[$key] = is_string($key) && preg_match(self::SENSITIVE_KEY_PATTERN, $key) === 1
+            $sanitized[$sanitizedKey] = is_string($sanitizedKey) && preg_match(self::SENSITIVE_KEY_PATTERN, $sanitizedKey) === 1
                 ? self::REDACTED
                 : self::sanitizeValue($item, $depth, $entries, $maxDepth, $maxEntries, $maxStringBytes);
         }

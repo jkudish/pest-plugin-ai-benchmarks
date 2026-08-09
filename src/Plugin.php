@@ -5,23 +5,34 @@ declare(strict_types=1);
 namespace Jkudish\PestAiBenchmarks;
 
 use InvalidArgumentException;
+use Jkudish\PestAiBenchmarks\Evidence\PestEvalObservation;
+use Jkudish\PestAiBenchmarks\Evidence\RuntimeScorerCollector;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
 use Jkudish\PestAiBenchmarks\Reporters\TerminalReporter;
 use Pest\Contracts\Plugins\AddsOutput;
+use Pest\Contracts\Plugins\Bootable;
 use Pest\Contracts\Plugins\HandlesArguments;
 use Pest\Contracts\Plugins\HandlesOriginalArguments;
 use Pest\Contracts\Plugins\Terminable;
+use Pest\Evals\Events\Scored;
 use Pest\Plugins\Parallel;
 use Pest\Support\Container;
 use Symfony\Component\Console\Output\OutputInterface;
 
-final class Plugin implements AddsOutput, HandlesArguments, HandlesOriginalArguments, Terminable
+final class Plugin implements AddsOutput, Bootable, HandlesArguments, HandlesOriginalArguments, Terminable
 {
     private const string EVAL_MODE_ENV = 'PEST_EVALS';
 
     private static bool $evalMode = false;
 
     private static ?string $benchmarkFilter = null;
+
+    public function boot(): void
+    {
+        pest()->evals()->afterScored(function (Scored $event): void {
+            RuntimeScorerCollector::record(PestEvalObservation::fromEvent($event));
+        });
+    }
 
     /** @param array<int, string> $arguments */
     public function handleOriginalArguments(array $arguments): void

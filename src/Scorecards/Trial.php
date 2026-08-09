@@ -6,10 +6,15 @@ namespace Jkudish\PestAiBenchmarks\Scorecards;
 
 use InvalidArgumentException;
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
+use Jkudish\PestAiBenchmarks\Results\StableEvidenceSanitizer;
 
 /** @internal */
 final readonly class Trial
 {
+    public const int MAX_IDENTITY_BYTES = 1_024;
+
+    public const int MAX_RESULTS = 1_000;
+
     /** @param array<int, Result> $results */
     public function __construct(
         public EvidenceId $id,
@@ -33,6 +38,10 @@ final readonly class Trial
             throw new InvalidArgumentException('A trial must contain at least one result.');
         }
 
+        if (count($this->results) > self::MAX_RESULTS) {
+            throw new InvalidArgumentException('A trial contains too many results.');
+        }
+
     }
 
     /** @return array<string, mixed> */
@@ -44,8 +53,8 @@ final readonly class Trial
                 'scorecard_id' => $scorecardId->value,
                 'execution_id' => $executionId->value,
             ],
-            'case_id' => $this->caseId,
-            'configuration' => $this->configuration,
+            'case_id' => StableEvidenceSanitizer::text($this->caseId, self::MAX_IDENTITY_BYTES),
+            'configuration' => StableEvidenceSanitizer::text($this->configuration, self::MAX_IDENTITY_BYTES),
             'repeat' => $this->repeat,
             'fingerprint' => $this->fingerprint,
             'results' => array_map(

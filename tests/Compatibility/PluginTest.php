@@ -134,6 +134,109 @@ it('applies named Laravel configurations and emits a durable run bundle in eval 
     ]);
 });
 
+it('records Pest repetitions under stable case identities', function (): void {
+    $root = dirname(__DIR__, 2);
+    $before = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
+    $process = new Process([
+        PHP_BINARY,
+        $root.'/vendor/bin/pest',
+        __DIR__.'/Fixtures/RepeatedExecutionBenchmark.php',
+        '--evals',
+        '--ci',
+    ], $root);
+
+    $process->mustRun();
+
+    $after = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
+    $created = array_values(array_diff($after, $before));
+
+    expect($created)->toHaveCount(1);
+
+    $scorecard = json_decode((string) file_get_contents($created[0]), true, flags: JSON_THROW_ON_ERROR);
+    $trials = $scorecard['trials'] ?? [];
+    $grouped = collect($trials)->groupBy(
+        fn (array $trial): string => $trial['case_id']."\0".$trial['configuration'],
+    );
+
+    expect($trials)->toHaveCount(12)
+        ->and(array_unique(array_column($trials, 'case_id')))->toHaveCount(2)
+        ->and($grouped)->toHaveCount(4)
+        ->and(array_unique(array_column($trials, 'fingerprint')))->toHaveCount(4);
+
+    foreach ($grouped as $repetitions) {
+        expect($repetitions->pluck('repeat')->sort()->values()->all())->toBe([1, 2, 3]);
+    }
+});
+
+it('captures native Pest scorer results through the fork callback', function (): void {
+    $root = dirname(__DIR__, 2);
+    $before = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
+    $process = new Process([
+        PHP_BINARY,
+        $root.'/vendor/bin/pest',
+        __DIR__.'/Fixtures/ScoredExecutionBenchmark.php',
+        '--evals',
+        '--ci',
+    ], $root);
+
+    $process->mustRun();
+
+    $after = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
+    $created = array_values(array_diff($after, $before));
+
+    expect($created)->toHaveCount(1);
+
+    $scorecard = json_decode((string) file_get_contents($created[0]), true, flags: JSON_THROW_ON_ERROR);
+    $results = $scorecard['trials'][0]['results'] ?? [];
+    $scored = collect($results)->firstWhere('scorer', 'receipt-fields');
+
+    expect($results)->toHaveCount(2)
+        ->and($scored)->toBeArray()
+        ->and($scored['score'] ?? null)->toBe(0.96)
+        ->and($scored['reasoning'] ?? null)->toBe('The expected merchant and account matched.')
+        ->and($scored['threshold'] ?? null)->toBe(0.9)
+        ->and($scored['passed'] ?? null)->toBeTrue()
+        ->and($scored['sample'] ?? null)->toBe(1)
+        ->and($scored['samples'] ?? null)->toBe(1)
+        ->and($scored['measurements'][0]['fingerprint'] ?? null)->toStartWith('sha256:');
+});
+
+it('retains failed scorer output privately while sanitizing stable evidence', function (): void {
+    $root = dirname(__DIR__, 2);
+    $before = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
+    $process = new Process([
+        PHP_BINARY,
+        $root.'/vendor/bin/pest',
+        __DIR__.'/Fixtures/FailedScoredExecutionBenchmark.php',
+        '--evals',
+        '--ci',
+    ], $root);
+
+    $process->run();
+
+    expect($process->isSuccessful())->toBeFalse();
+
+    $after = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
+    $created = array_values(array_diff($after, $before));
+
+    expect($created)->toHaveCount(1);
+
+    $scorecardJson = (string) file_get_contents($created[0]);
+    $scorecard = json_decode($scorecardJson, true, flags: JSON_THROW_ON_ERROR);
+    $scored = collect($scorecard['trials'][0]['results'] ?? [])->firstWhere('scorer', 'receipt-fields');
+    $replayJson = (string) file_get_contents(dirname($created[0]).'/replay.private.json');
+    $replay = json_decode($replayJson, true, flags: JSON_THROW_ON_ERROR);
+
+    expect($scored)->toBeArray()
+        ->and($scored['score'] ?? null)->toBe(0.2)
+        ->and($scored['threshold'] ?? null)->toBe(0.9)
+        ->and($scored['passed'] ?? null)->toBeFalse()
+        ->and($scored['reasoning'] ?? null)->not->toContain('private-token')
+        ->and($scorecardJson)->not->toContain('Private Merchant')
+        ->and($scorecardJson)->not->toContain('Expected Merchant')
+        ->and($replay['trials'][0]['output'] ?? null)->toBe('{"merchant":"Private Merchant","account":"000"}');
+});
+
 it('rejects parallel benchmark execution', function (string $parallel): void {
     expect(fn () => (new Plugin)->handleOriginalArguments(['pest', '--evals', $parallel]))
         ->toThrow(InvalidArgumentException::class, 'AI benchmarks do not support parallel execution');

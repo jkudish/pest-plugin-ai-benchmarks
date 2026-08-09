@@ -6,6 +6,7 @@ namespace Jkudish\PestAiBenchmarks\Runs;
 
 use InvalidArgumentException;
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
+use Jkudish\PestAiBenchmarks\Results\StableEvidenceSanitizer;
 use JsonException;
 
 /** @internal */
@@ -14,6 +15,8 @@ final readonly class ReplayPayload
     public const string SCHEMA_VERSION = '0.1.0';
 
     private const string REDACTED = '[REDACTED]';
+
+    private const int MAX_STRING_BYTES = 1_048_576;
 
     /** @var array<int, array{trial_id: string, fingerprint: string, output: mixed}> */
     private array $trials;
@@ -68,12 +71,16 @@ final readonly class ReplayPayload
 
     private function redact(mixed $value, ?string $key = null): mixed
     {
-        if ($key !== null && preg_match('/(?:api[_-]?key|authorization|password|secret|access[_-]?token)/i', $key) === 1) {
+        if ($key !== null && preg_match('/(?:api[_-]?key|authorization|password|secret|credential|private[_-]?key|(?:^|[_-])(?:access|refresh|id)?[_-]?token$)/i', $key) === 1) {
             return self::REDACTED;
         }
 
         if (is_float($value) && ! is_finite($value)) {
             throw new InvalidArgumentException('Replay outputs must contain finite numeric values.');
+        }
+
+        if (is_string($value)) {
+            return StableEvidenceSanitizer::text($value, self::MAX_STRING_BYTES);
         }
 
         if (is_scalar($value) || $value === null) {
@@ -87,7 +94,10 @@ final readonly class ReplayPayload
         $redacted = [];
 
         foreach ($value as $nestedKey => $nestedValue) {
-            $redacted[$nestedKey] = $this->redact($nestedValue, is_string($nestedKey) ? $nestedKey : null);
+            $safeKey = is_string($nestedKey)
+                ? StableEvidenceSanitizer::text($nestedKey, self::MAX_STRING_BYTES)
+                : $nestedKey;
+            $redacted[$safeKey] = $this->redact($nestedValue, is_string($safeKey) ? $safeKey : null);
         }
 
         return $redacted;

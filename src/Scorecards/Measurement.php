@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace Jkudish\PestAiBenchmarks\Scorecards;
 
 use InvalidArgumentException;
+use Jkudish\PestAiBenchmarks\Results\StableEvidenceSanitizer;
 
 /** @internal */
 final readonly class Measurement
 {
+    public const int MAX_IDENTITY_BYTES = 1_024;
+
     private NormalizedObject $usage;
 
     private NormalizedObject $pricingSnapshot;
@@ -87,6 +90,9 @@ final readonly class Measurement
             return null;
         }
 
-        return ['provider' => $provider, 'model' => $model];
+        return [
+            'provider' => StableEvidenceSanitizer::text($provider, self::MAX_IDENTITY_BYTES),
+            'model' => StableEvidenceSanitizer::text($model, self::MAX_IDENTITY_BYTES),
+        ];
     }
 }
