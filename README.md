@@ -1,6 +1,6 @@
 # Pest AI Benchmarks
 
-Comparative AI benchmarks for Laravel applications, built on Pest 5 and Pest Evals. The plugin preserves Pest's datasets, expectations, repetitions, filtering, and failure behavior while adding named model/application configurations and durable benchmark evidence.
+Comparative AI benchmarks built on Pest 5 and Pest Evals. The plugin preserves Pest's datasets, expectations, repetitions, filtering, and failure behavior while adding named model/application configurations and durable benchmark evidence.
 
 > This package is under private pre-release validation and is not yet published.
 
@@ -50,29 +50,32 @@ Benchmark eval runs are deliberately serial in version 0.1. Combining `--evals` 
 
 `benchmark()` is the only benchmark declaration form. The package does not provide competing scorer, judge, sampling, case, target, candidate, or variant APIs.
 
-### Laravel configuration scope
+### Application configuration
 
-The package cannot safely guess which application config keys drive a production service. Bind one scope in your test bootstrap so named configurations change the same keys your production path reads:
+The package cannot safely guess which application config keys drive a production service. Configure those keys after the test application boots so named configurations change the same keys your production path reads:
 
 ```php
-use Illuminate\Contracts\Config\Repository;
-use Jkudish\PestAiBenchmarks\Laravel\LaravelConfigurationScope;
-
 beforeEach(function (): void {
-    app()->singleton(
-        LaravelConfigurationScope::class,
-        fn (): LaravelConfigurationScope => new LaravelConfigurationScope(
-            repository: app(Repository::class),
-            providerKey: 'receipt_ocr.provider',
-            modelKey: 'receipt_ocr.model',
-            optionsKey: 'receipt_ocr.options',
-            supportedSettings: ['receipt_ocr.prompt'],
-        ),
+    benchmarks()->configure(
+        provider: 'receipt_ocr.provider',
+        model: 'receipt_ocr.model',
+        options: 'receipt_ocr.options',
+        settings: ['receipt_ocr.prompt'],
     );
 });
 ```
 
-Production configurations can run without a scope. Model or application-setting overrides fail before the benchmark body when no scope is bound, preventing a requested model from being reported when it never affected execution.
+The `options` key is optional when candidates do not override provider options:
+
+```php
+benchmarks()->configure(
+    provider: 'receipt_ocr.provider',
+    model: 'receipt_ocr.model',
+    settings: ['receipt_ocr.prompt'],
+);
+```
+
+Production configurations can run without setup. Model or application-setting overrides fail before the benchmark body when `benchmarks()->configure(...)` has not been called, preventing a requested model from being reported when it never affected execution.
 
 ### Laravel AI observations
 

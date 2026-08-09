@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Jkudish\PestAiBenchmarks\Tests;
 
-use Illuminate\Contracts\Config\Repository;
-use Illuminate\Foundation\Application;
-use Jkudish\PestAiBenchmarks\Laravel\LaravelConfigurationScope;
 use Jkudish\PestAiBenchmarks\PestAiBenchmarksServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
 
@@ -30,12 +27,11 @@ abstract class TestCase extends Orchestra
             'receipt.prompt' => 'v1',
         ]);
 
-        $app->singleton(LaravelConfigurationScope::class, fn (Application $app): LaravelConfigurationScope => new LaravelConfigurationScope(
-            repository: $app->make(Repository::class),
-            providerKey: 'benchmark.provider',
-            modelKey: 'benchmark.model',
-            optionsKey: 'benchmark.options',
-            supportedSettings: ['benchmark.prompt', 'receipt.prompt'],
-        ));
+        benchmarks()->configure(
+            provider: 'benchmark.provider',
+            model: 'benchmark.model',
+            options: 'benchmark.options',
+            settings: ['benchmark.prompt', 'receipt.prompt'],
+        );
     }
 }

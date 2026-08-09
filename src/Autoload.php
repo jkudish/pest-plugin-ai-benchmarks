@@ -3,13 +3,14 @@
 declare(strict_types=1);
 
 use Jkudish\PestAiBenchmarks\BenchmarkCall;
+use Jkudish\PestAiBenchmarks\BenchmarkExecutor;
+use Jkudish\PestAiBenchmarks\Benchmarks;
 use Jkudish\PestAiBenchmarks\Comparisons\DeclarationContext;
 use Jkudish\PestAiBenchmarks\Comparisons\DeclarationRegistry;
 use Jkudish\PestAiBenchmarks\Configuration;
 use Jkudish\PestAiBenchmarks\Evidence\RuntimeScorerCollector;
-use Jkudish\PestAiBenchmarks\Laravel\BenchmarkExecutor;
-use Jkudish\PestAiBenchmarks\Laravel\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
+use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\Plugin;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
 use PHPUnit\Framework\Assert;
@@ -109,5 +110,13 @@ if (! function_exists('benchmark')) {
         }
 
         return $call;
+    }
+}
+
+if (! function_exists('benchmarks')) {
+    /** Configure how benchmark candidates map to application configuration. */
+    function benchmarks(): Benchmarks
+    {
+        return new Benchmarks;
     }
 }

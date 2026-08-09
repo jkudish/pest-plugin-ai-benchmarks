@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-use Jkudish\PestAiBenchmarks\Laravel\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
 use Jkudish\PestAiBenchmarks\Measurements\PricingAdapter;
 use Jkudish\PestAiBenchmarks\Measurements\PricingInput;
+use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 
 it('passes normalized usage and effective identity through the pricing seam', function (): void {
     $adapter = new class implements PricingAdapter

@@ -9,9 +9,9 @@ use Jkudish\LaravelAiPricing\ValueObjects\CostQuote;
 use Jkudish\LaravelAiPricing\ValueObjects\Money;
 use Jkudish\LaravelAiPricing\ValueObjects\PricingObservation;
 use Jkudish\PestAiBenchmarks\Configuration;
-use Jkudish\PestAiBenchmarks\Laravel\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\LaravelAi\AgentObservation;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
+use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
 
