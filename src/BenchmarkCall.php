@@ -109,6 +109,7 @@ final class BenchmarkCall
     public function repeat(int $times): self
     {
         $this->testCall->repeat($times);
+        DeclarationRegistry::setRepetitions($this, $times);
 
         return $this;
     }

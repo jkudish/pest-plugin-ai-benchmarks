@@ -5,12 +5,20 @@ declare(strict_types=1);
 namespace Jkudish\PestAiBenchmarks\Scorecards;
 
 use InvalidArgumentException;
-use JsonException;
+use Jkudish\PestAiBenchmarks\Results\StableEvidenceSanitizer;
 use stdClass;
 
 /** @internal */
 final readonly class NormalizedObject
 {
+    public const int MAX_BYTES = 65_536;
+
+    public const int MAX_DEPTH = 8;
+
+    public const int MAX_ENTRIES = 256;
+
+    public const int MAX_STRING_BYTES = 8_192;
+
     /** @var array<string, mixed> */
     private array $values;
 
@@ -21,15 +29,19 @@ final readonly class NormalizedObject
             throw new InvalidArgumentException('Normalized evidence must be a JSON object.');
         }
 
-        $normalized = $this->normalizeObject($values);
-
         try {
-            json_encode($normalized, JSON_THROW_ON_ERROR);
-        } catch (JsonException $exception) {
-            throw new InvalidArgumentException('Normalized evidence must contain only JSON-safe values.', previous: $exception);
+            $normalized = StableEvidenceSanitizer::object(
+                value: $values,
+                maxDepth: self::MAX_DEPTH,
+                maxEntries: self::MAX_ENTRIES,
+                maxBytes: self::MAX_BYTES,
+                maxStringBytes: self::MAX_STRING_BYTES,
+            );
+        } catch (InvalidArgumentException $exception) {
+            throw new InvalidArgumentException(str_replace('Stable evidence context', 'Normalized evidence', $exception->getMessage()), previous: $exception);
         }
 
-        $this->values = $normalized;
+        $this->values = $this->normalizeObject($normalized);
     }
 
     /** @return array<string, mixed> */

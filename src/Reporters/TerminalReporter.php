@@ -23,6 +23,8 @@ final readonly class TerminalReporter
                 continue;
             }
 
+            $measured = [];
+
             foreach ($trial['results'] as $result) {
                 if (! is_array($result)) {
                     continue;
@@ -33,8 +35,14 @@ final readonly class TerminalReporter
                 $failed += ($result['passed'] ?? null) === false ? 1 : 0;
 
                 foreach (is_array($result['measurements'] ?? null) ? $result['measurements'] : [] as $measurement) {
-                    if (is_array($measurement) && is_numeric($measurement['latency_ms'] ?? null)) {
+                    $fingerprint = is_array($measurement) ? ($measurement['fingerprint'] ?? null) : null;
+
+                    if (is_array($measurement)
+                        && is_string($fingerprint)
+                        && ! isset($measured[$fingerprint])
+                        && is_numeric($measurement['latency_ms'] ?? null)) {
                         $latencyMs += (float) $measurement['latency_ms'];
+                        $measured[$fingerprint] = true;
                     }
                 }
             }

@@ -67,6 +67,9 @@ function scorecardFixture(?OpaqueContext $context = null, ?string $reasoning = '
                                 fingerprint: 'sha256:judge-fixture',
                             ),
                         ],
+                        threshold: 0.9,
+                        sample: 1,
+                        samples: 3,
                     ),
                 ],
             ),
@@ -141,6 +144,32 @@ it('bundles a JSON Schema 2020-12 contract matching the serializer version', fun
         ->and($schema['properties']['schema_url']['const'])->toBe(Scorecard::SCHEMA_URL)
         ->and($schema['properties']['schema_version']['const'])->toBe(Scorecard::SCHEMA_VERSION)
         ->and($schema['properties']['context']['maxProperties'])->toBe(OpaqueContext::MAX_KEYS)
+        ->and($schema['$defs']['result']['properties']['scorer']['maxLength'])->toBe(Result::MAX_SCORER_BYTES)
         ->and($schema['$defs']['result']['properties']['reasoning']['maxLength'])->toBe(Result::MAX_REASONING_BYTES)
         ->and($schema['additionalProperties'])->toBeFalse();
+});
+
+it('recursively sanitizes and bounds stable scorecard strings and nested evidence', function (): void {
+    $scorecard = scorecardFixture(reasoning: "Invalid \xFF Bearer private-token");
+    $serialized = $scorecard->toArray();
+    $measurement = (new Measurement(
+        component: Component::Target,
+        mode: ExecutionMode::Live,
+        requestedProvider: 'openrouter',
+        requestedModel: 'model/requested',
+        effectiveProvider: 'provider',
+        effectiveModel: 'model-effective',
+        latencyMs: 10,
+        usage: ['nested' => ['access_token' => 'usage-secret', 'label' => "invalid \xFF"]],
+        retries: 0,
+        pricingCompleteness: PricingCompleteness::Complete,
+        pricingSnapshot: ['authorization' => 'Bearer pricing-secret'],
+        fingerprint: 'sha256:sanitized',
+    ))->toArray();
+
+    expect($serialized['trials'][0]['results'][0]['reasoning'])->not->toContain('private-token')
+        ->and(mb_check_encoding($serialized['trials'][0]['results'][0]['reasoning'], 'UTF-8'))->toBeTrue()
+        ->and($measurement['usage']['nested']['access_token'])->toBe('[REDACTED]')
+        ->and(mb_check_encoding($measurement['usage']['nested']['label'], 'UTF-8'))->toBeTrue()
+        ->and($measurement['pricing']['snapshot']['authorization'])->toBe('[REDACTED]');
 });

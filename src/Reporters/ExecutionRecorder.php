@@ -7,9 +7,16 @@ namespace Jkudish\PestAiBenchmarks\Reporters;
 use Closure;
 use DateTimeImmutable;
 use DateTimeZone;
+use Illuminate\Container\Container;
 use InvalidArgumentException;
+use Jkudish\LaravelAiPricing\Contracts\CostResolver;
+use Jkudish\LaravelAiPricing\ValueObjects\CostQuote;
 use Jkudish\PestAiBenchmarks\Configuration;
+use Jkudish\PestAiBenchmarks\Evidence\PestEvalObservation;
 use Jkudish\PestAiBenchmarks\Laravel\ModelIdentityEvidence;
+use Jkudish\PestAiBenchmarks\LaravelAi\AgentObservation;
+use Jkudish\PestAiBenchmarks\Measurements\LaravelAiPricingAdapter;
+use Jkudish\PestAiBenchmarks\Measurements\PricingInput;
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
 use Jkudish\PestAiBenchmarks\Results\OpaqueContext;
 use Jkudish\PestAiBenchmarks\Runs\ReplayPayload;
@@ -25,6 +32,7 @@ use Jkudish\PestAiBenchmarks\Scorecards\Scorecard;
 use Jkudish\PestAiBenchmarks\Scorecards\Trial;
 use Pest\TestSuite;
 use ReflectionFunction;
+use Throwable;
 
 /** @internal */
 final class ExecutionRecorder
@@ -74,7 +82,11 @@ final class ExecutionRecorder
         ];
     }
 
-    /** @param array{file: string, start_line: int, end_line: int, source_sha256: string} $targetIdentity */
+    /**
+     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string}  $targetIdentity
+     * @param  list<AgentObservation>  $observations
+     * @param  list<PestEvalObservation>  $scorerObservations
+     */
     public static function record(
         string $benchmark,
         string $caseId,
@@ -86,8 +98,14 @@ final class ExecutionRecorder
         mixed $output,
         ?OpaqueContext $context,
         array $targetIdentity,
+        array $observations = [],
+        array $scorerObservations = [],
+        ?int $repeat = null,
     ): void {
-        $mode = ExecutionMode::Simulated;
+        $mode = $observations !== [] && array_all(
+            $observations,
+            fn (AgentObservation $observation): bool => $observation->mode === ExecutionMode::Live,
+        ) ? ExecutionMode::Live : ExecutionMode::Simulated;
         $fingerprint = 'sha256:'.hash('sha256', self::encoded([
             'benchmark' => $benchmark,
             'target' => $targetIdentity,
@@ -100,16 +118,42 @@ final class ExecutionRecorder
                 'settings' => $configuration->settings,
             ],
             'execution_mode' => $mode->value,
+            'runtime_observations' => array_map(
+                fn (AgentObservation $observation): array => [
+                    'mode' => $observation->mode->value,
+                    'requested_provider' => $observation->requestedProvider,
+                    'requested_model' => $observation->requestedModel,
+                    'effective_provider' => $observation->effectiveProvider,
+                    'effective_model' => $observation->effectiveModel,
+                ],
+                $observations,
+            ),
+            'scorers' => array_map(
+                fn (PestEvalObservation $observation): array => [
+                    'name' => $observation->scorer,
+                    'threshold' => $observation->threshold,
+                    'sample' => $observation->sample,
+                    'samples' => $observation->samples,
+                ],
+                $scorerObservations,
+            ),
             'schema_version' => Scorecard::SCHEMA_VERSION,
             'package' => [
                 'name' => Scorecard::PACKAGE_NAME,
                 'version' => '0.1.0-dev',
             ],
         ]));
-        $repeatKey = $benchmark."\0".$caseId."\0".$configurationName;
-        $repeat = (self::$repeats[$repeatKey] ?? 0) + 1;
-        self::$repeats[$repeatKey] = $repeat;
+        if ($repeat === null) {
+            $repeatKey = $benchmark."\0".$caseId."\0".$configurationName;
+            $repeat = (self::$repeats[$repeatKey] ?? 0) + 1;
+            self::$repeats[$repeatKey] = $repeat;
+        }
+
+        if ($repeat < 1) {
+            throw new InvalidArgumentException('Trial repeat must be at least 1.');
+        }
         self::$contexts[$benchmark] = $context;
+        $pricingQuotes = array_map(self::quote(...), $observations);
 
         self::$trials[] = new RecordedTrial(
             benchmark: $benchmark,
@@ -120,7 +164,10 @@ final class ExecutionRecorder
             identity: $identity,
             latencyMs: $latencyMs,
             passed: $passed,
-            output: self::jsonSafe($output),
+            output: self::jsonSafe($output ?? self::scorerOutput($scorerObservations)),
+            observations: $observations,
+            pricingQuotes: $pricingQuotes,
+            scorerObservations: $scorerObservations,
         );
     }
 
@@ -166,38 +213,13 @@ final class ExecutionRecorder
 
         foreach ($recorded as $record) {
             $trialId = EvidenceId::generate('trial');
-            $measurementFingerprint = 'sha256:'.hash('sha256', $record->fingerprint.'|target');
             $trials[] = new Trial(
                 id: $trialId,
                 caseId: $record->caseId,
                 configuration: $record->configuration,
                 repeat: $record->repeat,
                 fingerprint: $record->fingerprint,
-                results: [
-                    new Result(
-                        id: EvidenceId::generate('res'),
-                        scorer: 'pest:test',
-                        score: $record->passed ? 1.0 : 0.0,
-                        reasoning: null,
-                        passed: $record->passed,
-                        measurements: [
-                            new Measurement(
-                                component: Component::Target,
-                                mode: ExecutionMode::Simulated,
-                                requestedProvider: $record->identity->requestedProvider,
-                                requestedModel: $record->identity->requestedModel,
-                                effectiveProvider: $record->identity->effectiveProvider,
-                                effectiveModel: $record->identity->effectiveModel,
-                                latencyMs: $record->latencyMs,
-                                usage: [],
-                                retries: 0,
-                                pricingCompleteness: PricingCompleteness::Unavailable,
-                                pricingSnapshot: [],
-                                fingerprint: $measurementFingerprint,
-                            ),
-                        ],
-                    ),
-                ],
+                results: self::results($record),
             );
             $replay[] = [
                 'trial_id' => $trialId->value,
@@ -221,9 +243,157 @@ final class ExecutionRecorder
         return $scorecard;
     }
 
+    /** @return list<Result> */
+    private static function results(RecordedTrial $record): array
+    {
+        $measurements = self::measurements($record);
+        $results = [new Result(
+            id: EvidenceId::generate('res'),
+            scorer: 'pest:test',
+            score: $record->passed ? 1.0 : 0.0,
+            reasoning: null,
+            passed: $record->passed,
+            measurements: $measurements,
+            threshold: null,
+            sample: null,
+            samples: null,
+        )];
+
+        foreach ($record->scorerObservations as $observation) {
+            $results[] = new Result(
+                id: EvidenceId::generate('res'),
+                scorer: $observation->scorer,
+                score: $observation->score,
+                reasoning: $observation->reasoning,
+                passed: $observation->passed,
+                measurements: $measurements,
+                threshold: $observation->threshold,
+                sample: $observation->sample,
+                samples: $observation->samples,
+            );
+        }
+
+        return $results;
+    }
+
+    /** @return list<Measurement> */
+    private static function measurements(RecordedTrial $record): array
+    {
+        if ($record->observations === []) {
+            return [new Measurement(
+                component: Component::Target,
+                mode: ExecutionMode::Simulated,
+                requestedProvider: $record->identity->requestedProvider,
+                requestedModel: $record->identity->requestedModel,
+                effectiveProvider: $record->identity->effectiveProvider,
+                effectiveModel: $record->identity->effectiveModel,
+                latencyMs: $record->latencyMs,
+                usage: [],
+                retries: 0,
+                pricingCompleteness: PricingCompleteness::Unavailable,
+                pricingSnapshot: [],
+                fingerprint: self::measurementFingerprint($record, 0, null),
+            )];
+        }
+
+        $measurements = [];
+
+        foreach ($record->observations as $index => $observation) {
+            $quote = $record->pricingQuotes[$index] ?? CostQuote::unavailable();
+
+            $measurements[] = new Measurement(
+                component: Component::Target,
+                mode: $observation->mode,
+                requestedProvider: $observation->requestedProvider,
+                requestedModel: $observation->requestedModel,
+                effectiveProvider: $observation->effectiveProvider,
+                effectiveModel: $observation->effectiveModel,
+                latencyMs: $observation->latencyMs,
+                usage: $observation->usage->toArray(),
+                retries: $index,
+                pricingCompleteness: PricingCompleteness::from($quote->completeness->value),
+                pricingSnapshot: $quote->toArray(),
+                fingerprint: self::measurementFingerprint($record, $index, $observation),
+            );
+        }
+
+        return $measurements;
+    }
+
+    private static function quote(AgentObservation $observation): CostQuote
+    {
+        if ($observation->mode !== ExecutionMode::Live
+            || $observation->effectiveProvider === null
+            || $observation->effectiveModel === null) {
+            return CostQuote::unavailable();
+        }
+
+        try {
+            $container = Container::getInstance();
+
+            if (! $container->bound(CostResolver::class)) {
+                return CostQuote::unavailable();
+            }
+
+            $resolver = $container->make(CostResolver::class);
+
+            return (new LaravelAiPricingAdapter($resolver))->price(new PricingInput(
+                model: new ModelIdentityEvidence(
+                    requestedProvider: $observation->requestedProvider,
+                    requestedModel: $observation->requestedModel,
+                    effectiveProvider: $observation->effectiveProvider,
+                    effectiveModel: $observation->effectiveModel,
+                ),
+                usage: $observation->usage,
+            ));
+        } catch (Throwable) {
+            return CostQuote::unavailable();
+        }
+    }
+
+    private static function measurementFingerprint(
+        RecordedTrial $record,
+        int $index,
+        ?AgentObservation $observation,
+    ): string {
+        $requestedProvider = $record->identity->requestedProvider;
+        $requestedModel = $record->identity->requestedModel;
+        $effectiveProvider = $record->identity->effectiveProvider;
+        $effectiveModel = $record->identity->effectiveModel;
+        $succeeded = $record->passed;
+
+        if ($observation instanceof AgentObservation) {
+            $requestedProvider = $observation->requestedProvider;
+            $requestedModel = $observation->requestedModel;
+            $effectiveProvider = $observation->effectiveProvider;
+            $effectiveModel = $observation->effectiveModel;
+            $succeeded = $observation->succeeded;
+        }
+
+        return 'sha256:'.hash('sha256', self::encoded([
+            'trial' => $record->fingerprint,
+            'component' => Component::Target->value,
+            'attempt' => $index,
+            'mode' => $observation?->mode->value ?? ExecutionMode::Simulated->value,
+            'requested_provider' => $requestedProvider,
+            'requested_model' => $requestedModel,
+            'effective_provider' => $effectiveProvider,
+            'effective_model' => $effectiveModel,
+            'succeeded' => $succeeded,
+        ]));
+    }
+
     private static function encoded(mixed $value): string
     {
         return json_encode(self::jsonSafe($value), JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
+    }
+
+    /** @param list<PestEvalObservation> $observations */
+    private static function scorerOutput(array $observations): ?string
+    {
+        $observation = end($observations);
+
+        return $observation instanceof PestEvalObservation ? $observation->output : null;
     }
 
     private static function jsonSafe(mixed $value): mixed

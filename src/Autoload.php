@@ -6,8 +6,10 @@ use Jkudish\PestAiBenchmarks\BenchmarkCall;
 use Jkudish\PestAiBenchmarks\Comparisons\DeclarationContext;
 use Jkudish\PestAiBenchmarks\Comparisons\DeclarationRegistry;
 use Jkudish\PestAiBenchmarks\Configuration;
+use Jkudish\PestAiBenchmarks\Evidence\RuntimeScorerCollector;
 use Jkudish\PestAiBenchmarks\Laravel\BenchmarkExecutor;
 use Jkudish\PestAiBenchmarks\Laravel\ModelIdentityEvidence;
+use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
 use Jkudish\PestAiBenchmarks\Plugin;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
 use PHPUnit\Framework\Assert;
@@ -42,17 +44,31 @@ if (! function_exists('benchmark')) {
                     }
                 }
 
+                $declaration = DeclarationRegistry::current();
+                $repeat = 1;
+
+                if ($declaration->repetitions > 1) {
+                    $repeatArgument = array_pop($arguments);
+
+                    if (! is_int($repeatArgument) || $repeatArgument < 1 || $repeatArgument > $declaration->repetitions) {
+                        throw new LogicException('Pest did not provide a valid benchmark repetition index.');
+                    }
+
+                    $repeat = $repeatArgument;
+                }
+
                 $caseArguments = array_values($arguments);
                 $caseId = ExecutionRecorder::caseId($caseArguments);
                 $targetIdentity = ExecutionRecorder::targetIdentity($test);
-                $declaration = DeclarationRegistry::current();
 
                 return (new BenchmarkExecutor)->run(
                     $configuration,
-                    function (ModelIdentityEvidence $identity) use ($caseArguments, $caseId, $configuration, $configurationName, $declaration, $description, $targetIdentity, $test): mixed {
+                    function (ModelIdentityEvidence $identity) use ($caseArguments, $caseId, $configuration, $configurationName, $declaration, $description, $repeat, $targetIdentity, $test): mixed {
                         $startedAt = hrtime(true);
                         $output = null;
                         $passed = false;
+                        RuntimeObservationCollector::begin();
+                        RuntimeScorerCollector::begin();
 
                         try {
                             $output = $test->call($this, ...$caseArguments);
@@ -60,6 +76,9 @@ if (! function_exists('benchmark')) {
                         } catch (Throwable $exception) {
                             throw $exception;
                         } finally {
+                            $observations = RuntimeObservationCollector::finish();
+                            $scorerObservations = RuntimeScorerCollector::finish();
+
                             ExecutionRecorder::record(
                                 benchmark: $description,
                                 caseId: $caseId,
@@ -71,6 +90,9 @@ if (! function_exists('benchmark')) {
                                 output: $output,
                                 context: $declaration->context,
                                 targetIdentity: $targetIdentity,
+                                observations: $observations,
+                                scorerObservations: $scorerObservations,
+                                repeat: $repeat,
                             );
                         }
 

@@ -4,11 +4,19 @@ declare(strict_types=1);
 
 namespace Jkudish\PestAiBenchmarks\Reporters;
 
+use Jkudish\LaravelAiPricing\ValueObjects\CostQuote;
+use Jkudish\PestAiBenchmarks\Evidence\PestEvalObservation;
 use Jkudish\PestAiBenchmarks\Laravel\ModelIdentityEvidence;
+use Jkudish\PestAiBenchmarks\LaravelAi\AgentObservation;
 
 /** @internal */
 final readonly class RecordedTrial
 {
+    /**
+     * @param  list<AgentObservation>  $observations
+     * @param  list<CostQuote>  $pricingQuotes
+     * @param  list<PestEvalObservation>  $scorerObservations
+     */
     public function __construct(
         public string $benchmark,
         public string $caseId,
@@ -19,5 +27,8 @@ final readonly class RecordedTrial
         public float $latencyMs,
         public bool $passed,
         public mixed $output,
+        public array $observations = [],
+        public array $pricingQuotes = [],
+        public array $scorerObservations = [],
     ) {}
 }

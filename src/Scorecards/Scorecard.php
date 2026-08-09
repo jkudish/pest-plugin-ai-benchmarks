@@ -9,11 +9,20 @@ use DateTimeZone;
 use InvalidArgumentException;
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
 use Jkudish\PestAiBenchmarks\Results\OpaqueContext;
+use Jkudish\PestAiBenchmarks\Results\StableEvidenceSanitizer;
 use JsonException;
 
 /** @internal */
 final readonly class Scorecard
 {
+    public const int MAX_BENCHMARK_BYTES = 1_024;
+
+    public const int MAX_PACKAGE_VERSION_BYTES = 128;
+
+    public const int MAX_TRIALS = 10_000;
+
+    public const int MAX_JSON_BYTES = 16_777_216;
+
     public const string SCHEMA_VERSION = '0.1.0';
 
     public const string SCHEMA_URL = 'https://raw.githubusercontent.com/jkudish/pest-plugin-ai-benchmarks/v0.1.0/resources/schema/scorecard.schema.json';
@@ -41,6 +50,10 @@ final readonly class Scorecard
             throw new InvalidArgumentException('A scorecard must contain at least one trial.');
         }
 
+        if (count($this->trials) > self::MAX_TRIALS) {
+            throw new InvalidArgumentException('A scorecard contains too many trials.');
+        }
+
     }
 
     /** @return array<string, mixed> */
@@ -51,11 +64,11 @@ final readonly class Scorecard
             'schema_version' => self::SCHEMA_VERSION,
             'package' => [
                 'name' => self::PACKAGE_NAME,
-                'version' => $this->packageVersion,
+                'version' => StableEvidenceSanitizer::text($this->packageVersion, self::MAX_PACKAGE_VERSION_BYTES),
             ],
             'scorecard_id' => $this->id->value,
             'execution_id' => $this->executionId->value,
-            'benchmark' => $this->benchmark,
+            'benchmark' => StableEvidenceSanitizer::text($this->benchmark, self::MAX_BENCHMARK_BYTES),
             'created_at' => $this->createdAt
                 ->setTimezone(new DateTimeZone('UTC'))
                 ->format('Y-m-d\TH:i:s.u\Z'),
@@ -75,9 +88,15 @@ final readonly class Scorecard
     /** @throws JsonException */
     public function toJson(): string
     {
-        return json_encode(
+        $json = json_encode(
             $this->toArray(),
             JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
         )."\n";
+
+        if (strlen($json) > self::MAX_JSON_BYTES) {
+            throw new InvalidArgumentException('The stable scorecard exceeds the maximum encoded size.');
+        }
+
+        return $json;
     }
 }
