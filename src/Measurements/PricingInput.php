@@ -6,7 +6,7 @@ namespace Jkudish\PestAiBenchmarks\Measurements;
 
 use Jkudish\LaravelAiPricing\ValueObjects\Money;
 use Jkudish\LaravelAiPricing\ValueObjects\PriceDefinition;
-use Jkudish\PestAiBenchmarks\Laravel\ModelIdentityEvidence;
+use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 
 final readonly class PricingInput
 {

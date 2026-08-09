@@ -6,8 +6,8 @@ namespace Jkudish\PestAiBenchmarks\Reporters;
 
 use Jkudish\LaravelAiPricing\ValueObjects\CostQuote;
 use Jkudish\PestAiBenchmarks\Evidence\PestEvalObservation;
-use Jkudish\PestAiBenchmarks\Laravel\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\LaravelAi\AgentObservation;
+use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 
 /** @internal */
 final readonly class RecordedTrial

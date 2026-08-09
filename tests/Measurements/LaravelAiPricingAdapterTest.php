@@ -10,10 +10,10 @@ use Jkudish\LaravelAiPricing\ValueObjects\Money;
 use Jkudish\LaravelAiPricing\ValueObjects\PriceDefinition;
 use Jkudish\LaravelAiPricing\ValueObjects\PricingObservation;
 use Jkudish\LaravelAiPricing\ValueObjects\Rate;
-use Jkudish\PestAiBenchmarks\Laravel\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\Measurements\LaravelAiPricingAdapter;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
 use Jkudish\PestAiBenchmarks\Measurements\PricingInput;
+use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 
 it('delegates effective model and normalized usage to the shared pricing resolver', function (): void {
     $observation = null;

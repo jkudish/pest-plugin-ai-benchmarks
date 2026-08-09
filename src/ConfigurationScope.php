@@ -2,35 +2,62 @@
 
 declare(strict_types=1);
 
-namespace Jkudish\PestAiBenchmarks\Laravel;
+namespace Jkudish\PestAiBenchmarks;
 
 use Closure;
 use Illuminate\Contracts\Config\Repository;
 use InvalidArgumentException;
-use Jkudish\PestAiBenchmarks\Configuration;
 use RuntimeException;
 
-final class LaravelConfigurationScope
+/** @internal */
+final class ConfigurationScope
 {
+    /** @var list<string> */
+    private readonly array $supportedSettings;
+
     /**
-     * @param  list<string>  $supportedSettings
+     * @param  list<mixed>  $supportedSettings
      */
     public function __construct(
         private readonly Repository $repository,
         private readonly string $providerKey,
         private readonly string $modelKey,
-        private readonly string $optionsKey,
-        private readonly array $supportedSettings = [],
+        private readonly ?string $optionsKey,
+        array $supportedSettings = [],
     ) {
-        $keys = [$providerKey, $modelKey, $optionsKey, ...$supportedSettings];
+        $keys = [$providerKey, $modelKey];
+        $validatedSettings = [];
+
+        if ($optionsKey !== null) {
+            $keys[] = $optionsKey;
+        }
+
+        foreach ($supportedSettings as $setting) {
+            if (! is_string($setting)) {
+                throw new InvalidArgumentException('Benchmark configuration settings must be strings.');
+            }
+
+            $validatedSettings[] = $setting;
+            $keys[] = $setting;
+        }
+
+        $this->supportedSettings = $validatedSettings;
 
         if (count($keys) !== count(array_unique($keys))) {
-            throw new InvalidArgumentException('Laravel benchmark configuration keys must be unique.');
+            throw new InvalidArgumentException('Benchmark configuration keys must be unique.');
         }
 
         foreach ($keys as $key) {
             if ($key === '' || trim($key) !== $key) {
-                throw new InvalidArgumentException('Laravel benchmark configuration keys must be non-empty strings without surrounding whitespace.');
+                throw new InvalidArgumentException('Benchmark configuration keys must be non-empty strings without surrounding whitespace.');
+            }
+        }
+
+        foreach ($keys as $left) {
+            foreach ($keys as $right) {
+                if ($left !== $right && str_starts_with($left, $right.'.')) {
+                    throw new InvalidArgumentException('Benchmark configuration keys must not overlap hierarchically.');
+                }
             }
         }
     }
@@ -51,10 +78,14 @@ final class LaravelConfigurationScope
             $changes[$this->modelKey] = $configuration->model;
 
             if ($configuration->options !== []) {
+                if ($this->optionsKey === null) {
+                    throw new InvalidArgumentException('Model options require an application configuration key in benchmarks()->configure(...).');
+                }
+
                 $productionOptions = $this->repository->get($this->optionsKey);
 
                 if (! is_array($productionOptions)) {
-                    throw new RuntimeException(sprintf('Laravel configuration [%s] must contain an array before model options can be scoped.', $this->optionsKey));
+                    throw new RuntimeException(sprintf('Application configuration [%s] must contain an array before model options can be scoped.', $this->optionsKey));
                 }
 
                 $changes[$this->optionsKey] = array_replace($productionOptions, $configuration->options);
@@ -93,7 +124,7 @@ final class LaravelConfigurationScope
 
         if ($unsupported !== []) {
             throw new InvalidArgumentException(sprintf(
-                'Unsupported Laravel benchmark configuration setting(s): %s.',
+                'Unsupported benchmark configuration setting(s): %s.',
                 implode(', ', $unsupported),
             ));
         }
@@ -109,7 +140,7 @@ final class LaravelConfigurationScope
         foreach ($keys as $key) {
             if (! $this->repository->has($key)) {
                 throw new InvalidArgumentException(sprintf(
-                    'Laravel configuration [%s] must exist before it can be scoped.',
+                    'Application configuration [%s] must exist before it can be scoped.',
                     $key,
                 ));
             }
@@ -121,7 +152,7 @@ final class LaravelConfigurationScope
         $value = $this->repository->get($key);
 
         if (! is_string($value) || $value === '') {
-            throw new RuntimeException(sprintf('Laravel configuration [%s] must resolve to a non-empty string.', $key));
+            throw new RuntimeException(sprintf('Application configuration [%s] must resolve to a non-empty string.', $key));
         }
 
         return $value;

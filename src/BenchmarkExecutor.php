@@ -2,11 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Jkudish\PestAiBenchmarks\Laravel;
+namespace Jkudish\PestAiBenchmarks;
 
 use Closure;
 use Illuminate\Container\Container;
-use Jkudish\PestAiBenchmarks\Configuration;
 use LogicException;
 
 /** @internal */
@@ -22,17 +21,14 @@ final class BenchmarkExecutor
     {
         $container = Container::getInstance();
 
-        if ($container->bound(LaravelConfigurationScope::class)) {
-            $scope = $container->make(LaravelConfigurationScope::class);
+        if ($container->bound(ConfigurationScope::class)) {
+            $scope = $container->make(ConfigurationScope::class);
 
             return $scope->run($configuration, $callback);
         }
 
         if ($configuration->provider !== null || $configuration->settings !== []) {
-            throw new LogicException(sprintf(
-                'Configuration overrides require a bound %s with the application config keys used by the production path.',
-                LaravelConfigurationScope::class,
-            ));
+            throw new LogicException('Configuration overrides require benchmarks()->configure(...) with the application config keys used by the production path.');
         }
 
         return $callback(new ModelIdentityEvidence(

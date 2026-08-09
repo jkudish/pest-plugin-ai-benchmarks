@@ -76,7 +76,7 @@ it('does not leak a serial benchmark filter into child Pest processes', function
     expect($process->getOutput())->toContain('16 passed');
 });
 
-it('applies named Laravel configurations and emits a durable run bundle in eval mode', function (): void {
+it('applies named configurations and emits a durable run bundle in eval mode', function (): void {
     $root = dirname(__DIR__, 2);
     $before = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
     $process = new Process([

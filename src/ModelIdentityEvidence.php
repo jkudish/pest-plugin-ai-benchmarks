@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Jkudish\PestAiBenchmarks\Laravel;
+namespace Jkudish\PestAiBenchmarks;
 
 final readonly class ModelIdentityEvidence
 {
