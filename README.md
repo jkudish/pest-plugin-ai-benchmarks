@@ -1,84 +1,106 @@
-# A Pest plugin for comparative AI benchmarks, durable evidence, replay, and baselines.
+# Pest AI Benchmarks
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/jkudish/pest-plugin-ai-benchmarks.svg?style=flat-square)](https://packagist.org/packages/jkudish/pest-plugin-ai-benchmarks)
-[![GitHub Tests Action Status](https://github.com/spatie/package-pest-plugin-ai-benchmarks-laravel/actions/workflows/run-tests.yml/badge.svg)](https://github.com/jkudish/pest-plugin-ai-benchmarks/actions?query=workflow%3Arun-tests+branch%3Amain)
-[![GitHub Code Style Action Status](https://github.com/spatie/package-pest-plugin-ai-benchmarks-laravel/actions/workflows/fix-php-code-style-issues.yml/badge.svg)](https://github.com/jkudish/pest-plugin-ai-benchmarks/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
-[![Total Downloads](https://img.shields.io/packagist/dt/jkudish/pest-plugin-ai-benchmarks.svg?style=flat-square)](https://packagist.org/packages/jkudish/pest-plugin-ai-benchmarks)
+Comparative AI benchmarks for Laravel applications, built on Pest 5 and Pest Evals. The plugin preserves Pest's datasets, expectations, repetitions, filtering, and failure behavior while adding named model/application configurations and durable benchmark evidence.
 
-This is where your description should go. Limit it to a paragraph or two. Consider adding a small example.
+> This package is under private pre-release validation and is not yet published.
 
-## Support us
+## Requirements
 
-[<img src="https://github-ads.s3.eu-central-1.amazonaws.com/pest-plugin-ai-benchmarks.jpg?t=1" width="419px" />](https://spatie.be/github-ad-click/pest-plugin-ai-benchmarks)
+- PHP 8.4 or newer
+- Laravel 13 for the standard Pest Laravel integration
+- Pest 5
+- Pest Evals 5
 
-We invest a lot of resources into creating [best in class open source packages](https://spatie.be/open-source). You can support us by [buying one of our paid products](https://spatie.be/open-source/support-us).
+The package keeps Illuminate 12-compatible contracts so applications with a custom test bootstrap are not needlessly excluded. However, `pestphp/pest-plugin-laravel` 5 currently requires Laravel 13.23 or newer, so the conventional Laravel 12 + Pest Laravel plugin combination cannot be supported or tested until that upstream constraint changes.
 
-We highly appreciate you sending us a postcard from your hometown, mentioning which of our package(s) you are using. You'll find our address on [our contact page](https://spatie.be/about-us). We publish all received postcards on [our virtual postcard wall](https://spatie.be/open-source/postcards).
-
-## Installation
-
-You can install the package via composer:
-
-```bash
-composer require jkudish/pest-plugin-ai-benchmarks
-```
-
-You can publish and run the migrations with:
-
-```bash
-php artisan vendor:publish --tag="pest-plugin-ai-benchmarks-migrations"
-php artisan migrate
-```
-
-You can publish the config file with:
-
-```bash
-php artisan vendor:publish --tag="pest-plugin-ai-benchmarks-config"
-```
-
-This is the contents of the published config file:
+## Example
 
 ```php
-return [
-];
+use Jkudish\PestAiBenchmarks\Configuration;
+
+benchmark('extracts receipts', function (array $case): void {
+    $result = app(ReceiptOcrService::class)->extract($case['file']);
+
+    expect($result)
+        ->merchant_name->toBe($case['expected']['merchant_name'])
+        ->total_amount->toBe($case['expected']['total_amount']);
+})
+    ->with('receipt corpus')
+    ->configurations([
+        'production' => Configuration::production(),
+        'gemini-flash' => Configuration::model(
+            provider: 'openrouter',
+            model: 'google/gemini-3-flash',
+        ),
+        'new-prompt' => Configuration::settings([
+            'receipt_ocr.prompt' => 'receipt-ocr-v2',
+        ]),
+    ])
+    ->repeat(3);
 ```
 
-Optionally, you can publish the views using
+Benchmarks are skipped during ordinary Pest runs before their test bodies execute. Run all benchmarks explicitly through Pest Evals, or select one by name:
 
 ```bash
-php artisan vendor:publish --tag="pest-plugin-ai-benchmarks-views"
+./vendor/bin/pest --evals
+./vendor/bin/pest --evals --benchmark='extracts receipts'
 ```
 
-## Usage
+Benchmark eval runs are deliberately serial in version 0.1. Combining `--evals` with `--parallel` or `-p` fails before execution because partial worker scorecards cannot be truthfully aggregated yet.
+
+`benchmark()` is the only benchmark declaration form. The package does not provide competing scorer, judge, sampling, case, target, candidate, or variant APIs.
+
+### Laravel configuration scope
+
+The package cannot safely guess which application config keys drive a production service. Bind one scope in your test bootstrap so named configurations change the same keys your production path reads:
 
 ```php
-$pestAiBenchmarks = new Jkudish\PestAiBenchmarks();
-echo $pestAiBenchmarks->echoPhrase('Hello, Jkudish!');
+use Illuminate\Contracts\Config\Repository;
+use Jkudish\PestAiBenchmarks\Laravel\LaravelConfigurationScope;
+
+beforeEach(function (): void {
+    app()->singleton(
+        LaravelConfigurationScope::class,
+        fn (): LaravelConfigurationScope => new LaravelConfigurationScope(
+            repository: app(Repository::class),
+            providerKey: 'receipt_ocr.provider',
+            modelKey: 'receipt_ocr.model',
+            optionsKey: 'receipt_ocr.options',
+            supportedSettings: ['receipt_ocr.prompt'],
+        ),
+    );
+});
 ```
 
-## Testing
+Production configurations can run without a scope. Model or application-setting overrides fail before the benchmark body when no scope is bound, preventing a requested model from being reported when it never affected execution.
+
+Successful eval-mode runs write a sanitized `scorecard.json` and private, redacted `replay.private.json` beneath `storage/app/ai-evals/runs/`. Requested and effective model identities are recorded independently. Runtime evidence is conservatively marked `simulated` until a truthful live/fake integration signal exists, so these early artifacts cannot be promoted as baselines.
+
+## Current foundation
+
+- Pest-native benchmark and configuration expansion
+- Explicit `--evals` safety gating and benchmark-name filtering
+- Scoped Laravel model and application configuration
+- Requested/effective model evidence
+- Monotonic latency and normalized usage seams
+- Shared `jkudish/laravel-ai-pricing` integration
+- Versioned JSON Schema 2020-12 scorecards
+- Stable scorecard, execution, trial, and result identities
+- Bounded opaque correlation context
+- Durable run bundles for successful and failed benchmark bodies
+- Explicit rejection of unsupported parallel benchmark execution
+
+Replay, resume, baseline, and regression primitives are present but are not yet wired to their final CLI lifecycle. Complete native Pest Evals scorer capture remains gated on the upstream result-event hook.
+
+## Development
 
 ```bash
 composer test
+composer analyse
+composer validate --strict
+composer audit
 ```
-
-## Changelog
-
-Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed recently.
-
-## Contributing
-
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
-
-## Security Vulnerabilities
-
-Please review [our security policy](../../security/policy) on how to report security vulnerabilities.
-
-## Credits
-
-- [Joey Kudish](https://github.com/jkudish)
-- [All Contributors](../../contributors)
 
 ## License
 
-The MIT License (MIT). Please see [License File](LICENSE.md) for more information.
+MIT. See [LICENSE.md](LICENSE.md).

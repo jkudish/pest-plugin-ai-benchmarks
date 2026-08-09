@@ -1,0 +1,151 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com/jkudish/pest-plugin-ai-benchmarks/v0.1.0/resources/schema/scorecard.schema.json",
+    "title": "Pest AI Benchmark Scorecard",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schema_url",
+        "schema_version",
+        "package",
+        "scorecard_id",
+        "execution_id",
+        "benchmark",
+        "created_at",
+        "trials"
+    ],
+    "properties": {
+        "schema_url": {
+            "const": "https://raw.githubusercontent.com/jkudish/pest-plugin-ai-benchmarks/v0.1.0/resources/schema/scorecard.schema.json"
+        },
+        "schema_version": {
+            "const": "0.1.0"
+        },
+        "package": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version"],
+            "properties": {
+                "name": {"const": "jkudish/pest-plugin-ai-benchmarks"},
+                "version": {"type": "string", "minLength": 1}
+            }
+        },
+        "scorecard_id": {"$ref": "#/$defs/scorecardId"},
+        "execution_id": {"$ref": "#/$defs/executionId"},
+        "benchmark": {"type": "string", "minLength": 1},
+        "created_at": {"type": "string", "format": "date-time"},
+        "context": {
+            "type": "object",
+            "description": "Bounded, opaque, JSON-safe correlation metadata. Consumers may preserve but must not interpret it.",
+            "maxProperties": 100,
+            "additionalProperties": true
+        },
+        "trials": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"$ref": "#/$defs/trial"}
+        }
+    },
+    "$defs": {
+        "scorecardId": {"type": "string", "pattern": "^sc_[A-Za-z0-9_-]{8,128}$"},
+        "executionId": {"type": "string", "pattern": "^exec_[A-Za-z0-9_-]{8,128}$"},
+        "trialId": {"type": "string", "pattern": "^trial_[A-Za-z0-9_-]{8,128}$"},
+        "resultId": {"type": "string", "pattern": "^res_[A-Za-z0-9_-]{8,128}$"},
+        "modelIdentity": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["provider", "model"],
+            "properties": {
+                "provider": {"type": "string", "minLength": 1},
+                "model": {"type": "string", "minLength": 1}
+            }
+        },
+        "measurement": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "component",
+                "mode",
+                "requested_model",
+                "effective_model",
+                "latency_ms",
+                "usage",
+                "retries",
+                "pricing",
+                "fingerprint"
+            ],
+            "properties": {
+                "component": {"enum": ["target", "judge"]},
+                "mode": {"enum": ["live", "recorded", "simulated"]},
+                "requested_model": {"$ref": "#/$defs/modelIdentity"},
+                "effective_model": {"$ref": "#/$defs/modelIdentity"},
+                "latency_ms": {"type": "number", "minimum": 0},
+                "usage": {"type": "object", "additionalProperties": true},
+                "retries": {"type": "integer", "minimum": 0},
+                "pricing": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["completeness", "snapshot"],
+                    "properties": {
+                        "completeness": {"enum": ["complete", "partial", "unavailable"]},
+                        "snapshot": {"type": "object", "additionalProperties": true}
+                    }
+                },
+                "fingerprint": {"type": "string", "minLength": 1}
+            }
+        },
+        "result": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["result_id", "source", "scorer", "score", "reasoning", "passed", "measurements"],
+            "properties": {
+                "result_id": {"$ref": "#/$defs/resultId"},
+                "source": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["scorecard_id", "execution_id", "trial_id"],
+                    "properties": {
+                        "scorecard_id": {"$ref": "#/$defs/scorecardId"},
+                        "execution_id": {"$ref": "#/$defs/executionId"},
+                        "trial_id": {"$ref": "#/$defs/trialId"}
+                    }
+                },
+                "scorer": {"type": "string", "minLength": 1},
+                "score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+                "reasoning": {"type": ["string", "null"], "maxLength": 8192},
+                "passed": {"type": ["boolean", "null"]},
+                "measurements": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"$ref": "#/$defs/measurement"}
+                }
+            }
+        },
+        "trial": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["trial_id", "source", "case_id", "configuration", "repeat", "fingerprint", "results"],
+            "properties": {
+                "trial_id": {"$ref": "#/$defs/trialId"},
+                "source": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["scorecard_id", "execution_id"],
+                    "properties": {
+                        "scorecard_id": {"$ref": "#/$defs/scorecardId"},
+                        "execution_id": {"$ref": "#/$defs/executionId"}
+                    }
+                },
+                "case_id": {"type": "string", "minLength": 1},
+                "configuration": {"type": "string", "minLength": 1},
+                "repeat": {"type": "integer", "minimum": 1},
+                "fingerprint": {"type": "string", "minLength": 1},
+                "results": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"$ref": "#/$defs/result"}
+                }
+            }
+        }
+    }
+}

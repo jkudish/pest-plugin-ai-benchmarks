@@ -1,37 +1,41 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Jkudish\PestAiBenchmarks\Tests;
 
-use Illuminate\Database\Eloquent\Factories\Factory;
-use Orchestra\Testbench\TestCase as Orchestra;
+use Illuminate\Contracts\Config\Repository;
+use Illuminate\Foundation\Application;
+use Jkudish\PestAiBenchmarks\Laravel\LaravelConfigurationScope;
 use Jkudish\PestAiBenchmarks\PestAiBenchmarksServiceProvider;
+use Orchestra\Testbench\TestCase as Orchestra;
 
-class TestCase extends Orchestra
+abstract class TestCase extends Orchestra
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        Factory::guessFactoryNamesUsing(
-            fn (string $modelName) => 'Jkudish\\PestAiBenchmarks\\Database\\Factories\\'.class_basename($modelName).'Factory'
-        );
-    }
-
-    protected function getPackageProviders($app)
+    /** @return list<class-string> */
+    protected function getPackageProviders($app): array
     {
         return [
             PestAiBenchmarksServiceProvider::class,
         ];
     }
 
-    public function getEnvironmentSetUp($app)
+    protected function defineEnvironment($app): void
     {
-        config()->set('database.default', 'testing');
+        $app['config']->set([
+            'benchmark.provider' => 'openrouter',
+            'benchmark.model' => 'production/model',
+            'benchmark.options' => [],
+            'benchmark.prompt' => 'v1',
+            'receipt.prompt' => 'v1',
+        ]);
 
-        /*
-         foreach (\Illuminate\Support\Facades\File::allFiles(__DIR__ . '/../database/migrations') as $migration) {
-            (include $migration->getRealPath())->up();
-         }
-         */
+        $app->singleton(LaravelConfigurationScope::class, fn (Application $app): LaravelConfigurationScope => new LaravelConfigurationScope(
+            repository: $app->make(Repository::class),
+            providerKey: 'benchmark.provider',
+            modelKey: 'benchmark.model',
+            optionsKey: 'benchmark.options',
+            supportedSettings: ['benchmark.prompt', 'receipt.prompt'],
+        ));
     }
 }
