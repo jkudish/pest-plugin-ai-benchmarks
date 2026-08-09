@@ -75,6 +75,29 @@ it('renders a terminal summary without mutating execution evidence', function ()
         ->and($scorecard->toJson())->toBe($before);
 });
 
+it('counts repeated trial latency while deduplicating scorer measurements within each trial', function (): void {
+    $first = reporterScorecard()->trials[0];
+    $scorecard = new Scorecard(
+        id: EvidenceId::from('sc_01JREPEATEDREPORT', 'sc'),
+        executionId: EvidenceId::from('exec_01JREPEATEDEXEC', 'exec'),
+        benchmark: 'repeated reporter benchmark',
+        createdAt: new DateTimeImmutable('2026-08-09T00:00:00Z'),
+        trials: [
+            $first,
+            new Trial(
+                id: EvidenceId::from('trial_01JREPEATEDTRIAL', 'trial'),
+                caseId: $first->caseId,
+                configuration: $first->configuration,
+                repeat: 2,
+                fingerprint: $first->fingerprint,
+                results: $first->results,
+            ),
+        ],
+    );
+
+    expect((new TerminalReporter)->render($scorecard))->toContain('Measured latency: 50.00 ms');
+});
+
 it('rejects case arguments without a stable serializable identity', function (): void {
     expect(fn (): string => ExecutionRecorder::caseId([new stdClass]))
         ->toThrow(InvalidArgumentException::class, 'must be stable JSON values; [stdClass] is unsupported');

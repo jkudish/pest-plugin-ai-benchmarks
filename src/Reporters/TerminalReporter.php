@@ -17,12 +17,13 @@ final readonly class TerminalReporter
         $passed = 0;
         $failed = 0;
         $latencyMs = 0.0;
-        $measured = [];
 
         foreach ($trials as $trial) {
             if (! is_array($trial) || ! is_array($trial['results'] ?? null)) {
                 continue;
             }
+
+            $measured = [];
 
             foreach ($trial['results'] as $result) {
                 if (! is_array($result)) {
