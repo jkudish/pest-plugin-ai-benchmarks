@@ -45,6 +45,35 @@ final readonly class ReplayReader
         }
     }
 
+    /**
+     * @param  Closure(array<string, mixed>, mixed): void  $consume
+     *
+     * @throws JsonException
+     */
+    public function replayTrial(
+        RunId $runId,
+        string $benchmark,
+        string $caseId,
+        string $configuration,
+        int $repeat,
+        string $fingerprint,
+        Closure $consume,
+    ): void {
+        $completed = (new SavedRun($this->paths, $runId))->completedTrial(
+            $benchmark,
+            $caseId,
+            $configuration,
+            $repeat,
+            $fingerprint,
+        );
+
+        if ($completed === null) {
+            throw new RuntimeException('Replay run does not contain the requested completed trial.');
+        }
+
+        $consume($completed['trial'], $completed['output']);
+    }
+
     private function verifiedRunDirectory(RunId $runId): string
     {
         $root = realpath($this->paths->runs);

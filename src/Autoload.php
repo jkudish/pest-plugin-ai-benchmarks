@@ -13,6 +13,10 @@ use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
 use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\Plugin;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
+use Jkudish\PestAiBenchmarks\Runs\ReplayReader;
+use Jkudish\PestAiBenchmarks\Runs\ResumeReader;
+use Jkudish\PestAiBenchmarks\Runs\RunPaths;
+use Pest\TestSuite;
 use PHPUnit\Framework\Assert;
 
 if (! function_exists('benchmark')) {
@@ -61,10 +65,124 @@ if (! function_exists('benchmark')) {
                 $caseArguments = array_values($arguments);
                 $caseId = ExecutionRecorder::caseId($caseArguments);
                 $targetIdentity = ExecutionRecorder::targetIdentity($test);
+                $evaluationIdentity = $declaration->evaluation instanceof Closure
+                    ? ExecutionRecorder::targetIdentity($declaration->evaluation)
+                    : null;
+                $configurationEvidence = (new BenchmarkExecutor)->fingerprint($configuration);
+                $sourceDependencies = ExecutionRecorder::dependencyIdentity($declaration->dependencies);
+                $fingerprint = ExecutionRecorder::trialFingerprint(
+                    benchmark: $description,
+                    caseId: $caseId,
+                    configurationName: $configurationName,
+                    configuration: $configuration,
+                    targetIdentity: $targetIdentity,
+                    evaluationIdentity: $evaluationIdentity,
+                    dependencyEvidence: $configurationEvidence,
+                    sourceDependencies: $sourceDependencies,
+                );
+                $paths = RunPaths::forProject(TestSuite::getInstance()->rootPath);
+
+                if (Plugin::replayRunId() !== null) {
+                    if (! $declaration->evaluation instanceof Closure) {
+                        throw new LogicException('Benchmark replay requires an evaluate(...) callback.');
+                    }
+
+                    $output = null;
+                    $sourceTrial = null;
+                    $passed = false;
+                    RuntimeScorerCollector::begin();
+
+                    try {
+                        (new ReplayReader($paths))->replayTrial(
+                            runId: Plugin::replayRunId(),
+                            benchmark: $description,
+                            caseId: $caseId,
+                            configuration: $configurationName,
+                            repeat: $repeat,
+                            fingerprint: $fingerprint,
+                            consume: function (array $trial, mixed $replayedOutput) use (&$output, &$sourceTrial): void {
+                                $sourceTrial = $trial;
+                                $output = $replayedOutput;
+                            },
+                        );
+
+                        $declaration->evaluation->call($this, $output, ...$caseArguments);
+                        $passed = true;
+                    } finally {
+                        $scorerObservations = RuntimeScorerCollector::finish();
+
+                        if (is_array($sourceTrial)) {
+                            ExecutionRecorder::recordReplay(
+                                benchmark: $description,
+                                caseId: $caseId,
+                                configuration: $configurationName,
+                                repeat: $repeat,
+                                fingerprint: $fingerprint,
+                                output: $output,
+                                sourceTrial: $sourceTrial,
+                                scorerObservations: $scorerObservations,
+                                declaration: $declaration,
+                                passed: $passed,
+                            );
+                        }
+                    }
+
+                    return $output;
+                }
+
+                if (Plugin::resumeRunId() !== null) {
+                    $output = null;
+                    $sourceTrial = null;
+                    $reusedFingerprint = null;
+                    $reused = (new ResumeReader($paths))->reuseCompletedTrial(
+                        runId: Plugin::resumeRunId(),
+                        benchmark: $description,
+                        caseId: $caseId,
+                        configuration: $configurationName,
+                        repeat: $repeat,
+                        fingerprint: $fingerprint,
+                        reuse: function (array $trial, mixed $replayedOutput) use (&$output, &$reusedFingerprint, &$sourceTrial): void {
+                            $output = $replayedOutput;
+                            $sourceTrial = $trial;
+                            $reusedFingerprint = $trial['fingerprint'] ?? null;
+                        },
+                    );
+
+                    if ($reused) {
+                        Assert::assertSame($fingerprint, $reusedFingerprint, 'Resumed trial fingerprint must match the requested execution.');
+
+                        if ($declaration->evaluation instanceof Closure && is_array($sourceTrial)) {
+                            $passed = false;
+                            RuntimeScorerCollector::begin();
+
+                            try {
+                                $declaration->evaluation->call($this, $output, ...$caseArguments);
+                                $passed = true;
+                            } finally {
+                                ExecutionRecorder::recordReplay(
+                                    benchmark: $description,
+                                    caseId: $caseId,
+                                    configuration: $configurationName,
+                                    repeat: $repeat,
+                                    fingerprint: $fingerprint,
+                                    output: $output,
+                                    sourceTrial: $sourceTrial,
+                                    scorerObservations: RuntimeScorerCollector::finish(),
+                                    declaration: $declaration,
+                                    passed: $passed,
+                                );
+                            }
+                        } elseif (is_array($sourceTrial)) {
+                            ExecutionRecorder::reuse($description, $sourceTrial, $output, $declaration);
+                        }
+
+                        return $output;
+                    }
+                }
 
                 return (new BenchmarkExecutor)->run(
                     $configuration,
-                    function (ModelIdentityEvidence $identity) use ($caseArguments, $caseId, $configuration, $configurationName, $declaration, $description, $repeat, $targetIdentity, $test): mixed {
+                    function (ModelIdentityEvidence $identity) use ($caseArguments, $caseId, $configuration, $configurationName, $declaration, $description, $evaluationIdentity, $fingerprint, $repeat, $targetIdentity, $test): mixed {
                         $startedAt = hrtime(true);
                         $output = null;
                         $passed = false;
@@ -73,6 +191,11 @@ if (! function_exists('benchmark')) {
 
                         try {
                             $output = $test->call($this, ...$caseArguments);
+
+                            if ($declaration->evaluation instanceof Closure) {
+                                $declaration->evaluation->call($this, $output, ...$caseArguments);
+                            }
+
                             $passed = true;
                         } catch (Throwable $exception) {
                             throw $exception;
@@ -94,6 +217,9 @@ if (! function_exists('benchmark')) {
                                 observations: $observations,
                                 scorerObservations: $scorerObservations,
                                 repeat: $repeat,
+                                fingerprint: $fingerprint,
+                                declaration: $declaration,
+                                evaluationIdentity: $evaluationIdentity,
                             );
                         }
 
@@ -103,7 +229,7 @@ if (! function_exists('benchmark')) {
             });
         });
 
-        $call = new BenchmarkCall($testCall, $declarationContext);
+        $call = new BenchmarkCall($testCall, $declarationContext, $description);
 
         if (! Plugin::matches($description)) {
             $call->skip('Benchmark does not match the active [--benchmark] filter.');

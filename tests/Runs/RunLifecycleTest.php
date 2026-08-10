@@ -45,7 +45,7 @@ function lifecycleScorecard(
                 results: [
                     new Result(
                         id: EvidenceId::from('res_01JRUNRESULT', 'res'),
-                        scorer: 'relevance',
+                        scorer: 'pest:test',
                         score: 0.9,
                         reasoning: 'Relevant.',
                         passed: true,
@@ -156,6 +156,7 @@ it('resumes completed trials only when fingerprints match', function (): void {
 
     $matched = $resume->reuseCompletedTrial(
         $runId,
+        'run lifecycle',
         'case-1',
         'production',
         1,
@@ -168,8 +169,8 @@ it('resumes completed trials only when fingerprints match', function (): void {
     expect($matched)->toBeTrue()
         ->and($reused['trial'])->toMatchArray(['case_id' => 'case-1', 'fingerprint' => 'sha256:trial-one'])
         ->and($reused['output'])->toBe(['text' => 'private model output', 'authorization' => '[REDACTED]'])
-        ->and($resume->reuseCompletedTrial($runId, 'missing', 'production', 1, 'sha256:trial-one', fn (): null => null))->toBeFalse()
-        ->and(fn () => $resume->reuseCompletedTrial($runId, 'case-1', 'production', 1, 'sha256:changed', fn (): null => null))
+        ->and($resume->reuseCompletedTrial($runId, 'run lifecycle', 'missing', 'production', 1, 'sha256:trial-one', fn (): null => null))->toBeFalse()
+        ->and(fn () => $resume->reuseCompletedTrial($runId, 'run lifecycle', 'case-1', 'production', 1, 'sha256:changed', fn (): null => null))
         ->toThrow(RuntimeException::class, 'fingerprint');
 });
 
@@ -188,6 +189,7 @@ it('rejects replay reuse when private and stable fingerprints disagree', functio
 
     expect(fn () => (new ResumeReader($paths))->reuseCompletedTrial(
         $runId,
+        'run lifecycle',
         'case-1',
         'production',
         1,
@@ -236,4 +238,58 @@ it('refuses to promote simulated evidence as a baseline', function (): void {
     ))->toThrow(RuntimeException::class, 'Simulated evidence');
 
     expect(is_dir($paths->baselines))->toBeFalse();
+});
+
+it('promotes a saved live run without copying private replay output', function (): void {
+    $paths = lifecyclePaths();
+    $runId = new RunId('run-promote-live');
+    $store = new BaselineStore($paths);
+
+    (new RunBundle($paths, $runId))->write(lifecycleScorecard(), lifecycleReplay());
+    $scorecardPath = $paths->run($runId).'/'.RunBundle::SCORECARD_FILE;
+    $scorecard = json_decode((string) file_get_contents($scorecardPath), true, flags: JSON_THROW_ON_ERROR);
+    $scorecard['context'] = ['private_input' => 'do-not-promote'];
+    $scorecard['trials'][0]['results'][0]['reasoning'] = 'private scorer reasoning';
+    file_put_contents($scorecardPath, json_encode($scorecard, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
+    $store->promote($runId, 'production');
+
+    $baseline = (string) file_get_contents($paths->baseline('production'));
+    $baselineData = json_decode($baseline, true, flags: JSON_THROW_ON_ERROR);
+
+    expect($baseline)->toContain('run lifecycle')
+        ->not->toContain('private model output')
+        ->not->toContain('do-not-promote')
+        ->not->toContain('private scorer reasoning')
+        ->and($baselineData)->not->toHaveKey('context')
+        ->and($baselineData['trials'][0]['results'][0]['reasoning'])->toBeNull();
+});
+
+it('rejects promotion of a saved simulated run', function (): void {
+    $paths = lifecyclePaths();
+    $runId = new RunId('run-promote-simulated');
+    $store = new BaselineStore($paths);
+
+    (new RunBundle($paths, $runId))->write(
+        lifecycleScorecard(mode: ExecutionMode::Simulated),
+        lifecycleReplay(),
+    );
+
+    expect(fn () => $store->promote($runId, 'simulated'))
+        ->toThrow(RuntimeException::class, 'Simulated evidence')
+        ->and(is_dir($paths->baselines))->toBeFalse();
+});
+
+it('rejects promotion of recorded evidence without explicit lineage', function (): void {
+    $paths = lifecyclePaths();
+    $runId = new RunId('run-promote-recorded');
+    $store = new BaselineStore($paths);
+
+    (new RunBundle($paths, $runId))->write(
+        lifecycleScorecard(mode: ExecutionMode::Recorded),
+        lifecycleReplay(),
+    );
+
+    expect(fn () => $store->promote($runId, 'recorded'))
+        ->toThrow(RuntimeException::class, 'Only directly observed live evidence')
+        ->and(is_dir($paths->baselines))->toBeFalse();
 });

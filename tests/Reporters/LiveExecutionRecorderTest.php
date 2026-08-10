@@ -165,7 +165,7 @@ it('keeps fake-gateway observations simulated and unpriced', function (): void {
         ->and($measurement['pricing']['completeness'])->toBe('unavailable');
 });
 
-it('binds trial fingerprints to effective runtime identity', function (): void {
+it('keeps pre-execution trial fingerprints stable while measurement fingerprints retain runtime identity', function (): void {
     foreach (['effective-a', 'effective-b'] as $effectiveModel) {
         ExecutionRecorder::record(
             benchmark: 'runtime identity fingerprint',
@@ -200,5 +200,7 @@ it('binds trial fingerprints to effective runtime identity', function (): void {
     $trials = ExecutionRecorder::flush()[0]->toArray()['trials'];
 
     expect($trials)->toHaveCount(2)
-        ->and($trials[0]['fingerprint'])->not->toBe($trials[1]['fingerprint']);
+        ->and($trials[0]['fingerprint'])->toBe($trials[1]['fingerprint'])
+        ->and($trials[0]['results'][0]['measurements'][0]['fingerprint'])
+        ->not->toBe($trials[1]['results'][0]['measurements'][0]['fingerprint']);
 });

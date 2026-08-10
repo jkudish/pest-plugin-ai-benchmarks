@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Jkudish\PestAiBenchmarks\Configuration;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
 use Jkudish\PestAiBenchmarks\Reporters\JsonReporter;
 use Jkudish\PestAiBenchmarks\Reporters\TerminalReporter;
@@ -110,4 +111,68 @@ it('fingerprints the benchmark target source identity', function (): void {
     expect($first)->toHaveKeys(['file', 'start_line', 'end_line', 'source_sha256'])
         ->and($first['file'])->toEndWith('tests/Reporters/ReporterTest.php')
         ->and($first['source_sha256'])->not->toBe($second['source_sha256']);
+});
+
+it('binds deterministic trial identity to the reusable evaluation callback', function (): void {
+    $target = [
+        'file' => 'tests/Evals/Receipt.php',
+        'start_line' => 10,
+        'end_line' => 20,
+        'source_sha256' => str_repeat('a', 64),
+    ];
+    $firstEvaluation = [
+        'file' => 'tests/Evals/Receipt.php',
+        'start_line' => 22,
+        'end_line' => 25,
+        'source_sha256' => str_repeat('b', 64),
+    ];
+    $secondEvaluation = [...$firstEvaluation, 'source_sha256' => str_repeat('c', 64)];
+    $configuration = Configuration::production();
+
+    $first = ExecutionRecorder::trialFingerprint(
+        'receipt benchmark',
+        'case-one',
+        'production',
+        $configuration,
+        $target,
+        $firstEvaluation,
+    );
+    $second = ExecutionRecorder::trialFingerprint(
+        'receipt benchmark',
+        'case-one',
+        'production',
+        $configuration,
+        $target,
+        $secondEvaluation,
+    );
+
+    expect($first)->toStartWith('sha256:')
+        ->not->toBe($second);
+});
+
+it('fingerprints JSON-safe closure captures independently of source', function (): void {
+    $closure = fn (string $captured): Closure => fn (): string => $captured;
+    $first = ExecutionRecorder::targetIdentity($closure('first'));
+    $second = ExecutionRecorder::targetIdentity($closure('second'));
+
+    expect($first['source_sha256'])->toBe($second['source_sha256'])
+        ->and($first['captures_sha256'])->not->toBe($second['captures_sha256']);
+});
+
+it('fingerprints explicit class and file dependencies and rejects ambiguous resolution', function (): void {
+    $dependency = tempnam(sys_get_temp_dir(), 'pest-ai-source-');
+
+    expect($dependency)->toBeString();
+
+    file_put_contents($dependency, "first version\n");
+    $first = ExecutionRecorder::dependencyIdentity([Configuration::class, $dependency]);
+    file_put_contents($dependency, "second version\n");
+    $second = ExecutionRecorder::dependencyIdentity([Configuration::class, $dependency]);
+
+    expect($first)->toHaveCount(2)
+        ->not->toBe($second)
+        ->and(fn () => ExecutionRecorder::dependencyIdentity(['missing-dependency.php']))
+        ->toThrow(RuntimeException::class, 'must resolve to a readable file')
+        ->and(fn () => ExecutionRecorder::dependencyIdentity([Configuration::class, 'src/Configuration.php']))
+        ->toThrow(RuntimeException::class, 'resolve to the same file');
 });

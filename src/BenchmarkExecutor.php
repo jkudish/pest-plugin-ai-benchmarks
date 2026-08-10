@@ -11,6 +11,22 @@ use LogicException;
 /** @internal */
 final class BenchmarkExecutor
 {
+    /** @return array<string, mixed>|null */
+    public function fingerprint(Configuration $configuration): ?array
+    {
+        $container = Container::getInstance();
+
+        if ($container->bound(ConfigurationScope::class)) {
+            return $container->make(ConfigurationScope::class)->fingerprint($configuration);
+        }
+
+        if ($configuration->provider !== null || $configuration->settings !== []) {
+            throw new LogicException('Configuration overrides require benchmarks()->configure(...) with the application config keys used by the production path.');
+        }
+
+        return null;
+    }
+
     /**
      * @template TResult
      *

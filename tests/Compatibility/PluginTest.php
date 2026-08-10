@@ -8,6 +8,14 @@ use Jkudish\PestAiBenchmarks\Runs\BaselineStore;
 use Jkudish\PestAiBenchmarks\Runs\RunPaths;
 use Symfony\Component\Process\Process;
 
+beforeEach(function (): void {
+    Plugin::reset();
+});
+
+afterEach(function (): void {
+    Plugin::reset();
+});
+
 it('removes the benchmark selector before PHPUnit and scopes execution to benchmarks', function (array $arguments, array $expected): void {
     $plugin = new Plugin;
     $plugin->handleOriginalArguments($arguments);
@@ -23,6 +31,35 @@ it('removes the benchmark selector before PHPUnit and scopes execution to benchm
         ['pest', '--group='.BenchmarkCall::BENCHMARK_GROUP],
     ],
 ]);
+
+it('removes benchmark lifecycle options before PHPUnit', function (): void {
+    $arguments = [
+        'pest',
+        '--evals',
+        '--benchmark-replay=run-one',
+        '--benchmark-baseline',
+        'production',
+    ];
+    $plugin = new Plugin;
+    $plugin->handleOriginalArguments($arguments);
+
+    expect($plugin->handleArguments($arguments))->toBe(['pest', '--evals'])
+        ->and(Plugin::replayRunId()?->value)->toBe('run-one')
+        ->and(Plugin::baselineName())->toBe('production');
+});
+
+it('validates benchmark lifecycle options before enabling them', function (): void {
+    expect(fn () => (new Plugin)->handleOriginalArguments(['pest', '--benchmark-replay=run-one']))
+        ->toThrow(InvalidArgumentException::class, 'require explicit [--evals] mode')
+        ->and(fn () => (new Plugin)->handleOriginalArguments([
+            'pest',
+            '--evals',
+            '--benchmark-replay=run-one',
+            '--benchmark-resume=run-one',
+        ]))->toThrow(InvalidArgumentException::class, 'mutually exclusive')
+        ->and(fn () => (new Plugin)->handleOriginalArguments(['pest', '--evals', '--benchmark-baseline=../unsafe']))
+        ->toThrow(InvalidArgumentException::class, 'Run IDs must be safe');
+});
 
 it('rejects an invalid benchmark selector', function (array $arguments, string $message): void {
     expect(fn () => (new Plugin)->handleOriginalArguments($arguments))
@@ -249,4 +286,21 @@ it('does not enable eval mode when argument validation fails', function (): void
     expect(fn () => $plugin->handleOriginalArguments(['pest', '--evals', '--parallel']))
         ->toThrow(InvalidArgumentException::class, 'AI benchmarks do not support parallel execution')
         ->and(Plugin::isEvalMode())->toBeFalse();
+});
+
+it('fails closed when distinct benchmarks share a description', function (): void {
+    $root = dirname(__DIR__, 2);
+    $process = new Process([
+        PHP_BINARY,
+        $root.'/vendor/bin/pest',
+        __DIR__.'/Fixtures/DuplicateDescriptionBenchmark.php',
+        __DIR__.'/Fixtures/DuplicateDescriptionSecondBenchmark.php',
+        '--evals',
+        '--ci',
+    ], $root);
+    $process->run();
+
+    expect($process->isSuccessful())->toBeFalse()
+        ->and($process->getOutput().$process->getErrorOutput())
+        ->toContain('benchmark descriptions must be unique');
 });

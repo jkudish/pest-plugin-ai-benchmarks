@@ -11,12 +11,20 @@ use Illuminate\Container\Container;
 use InvalidArgumentException;
 use Jkudish\LaravelAiPricing\Contracts\CostResolver;
 use Jkudish\LaravelAiPricing\ValueObjects\CostQuote;
+use Jkudish\PestAiBenchmarks\Comparisons\BenchmarkDeclaration;
+use Jkudish\PestAiBenchmarks\Comparisons\GateEvaluator;
+use Jkudish\PestAiBenchmarks\Comparisons\RegressionEvaluation;
+use Jkudish\PestAiBenchmarks\Comparisons\RegressionEvaluator;
+use Jkudish\PestAiBenchmarks\Comparisons\RegressionPolicy;
+use Jkudish\PestAiBenchmarks\Comparisons\RegressionStatus;
+use Jkudish\PestAiBenchmarks\Comparisons\ScorecardEvidence;
 use Jkudish\PestAiBenchmarks\Configuration;
 use Jkudish\PestAiBenchmarks\Evidence\PestEvalObservation;
 use Jkudish\PestAiBenchmarks\LaravelAi\AgentObservation;
 use Jkudish\PestAiBenchmarks\Measurements\LaravelAiPricingAdapter;
 use Jkudish\PestAiBenchmarks\Measurements\PricingInput;
 use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
+use Jkudish\PestAiBenchmarks\Plugin;
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
 use Jkudish\PestAiBenchmarks\Results\OpaqueContext;
 use Jkudish\PestAiBenchmarks\Runs\ReplayPayload;
@@ -31,7 +39,9 @@ use Jkudish\PestAiBenchmarks\Scorecards\Result;
 use Jkudish\PestAiBenchmarks\Scorecards\Scorecard;
 use Jkudish\PestAiBenchmarks\Scorecards\Trial;
 use Pest\TestSuite;
+use ReflectionClass;
 use ReflectionFunction;
+use RuntimeException;
 use Throwable;
 
 /** @internal */
@@ -46,13 +56,25 @@ final class ExecutionRecorder
     /** @var array<string, OpaqueContext|null> */
     private static array $contexts = [];
 
+    /** @var array<string, BenchmarkDeclaration> */
+    private static array $declarations = [];
+
+    /** @var array<string, RegressionEvaluation> */
+    private static array $evaluations = [];
+
+    /** @var array<string, string> */
+    private static array $references = [];
+
+    /** @var array<string, array<string, RegressionEvaluation>> */
+    private static array $referenceEvaluations = [];
+
     /** @param list<mixed> $arguments */
     public static function caseId(array $arguments): string
     {
         return 'case_'.substr(hash('sha256', self::encoded(self::stableCaseValue($arguments))), 0, 24);
     }
 
-    /** @return array{file: string, start_line: int, end_line: int, source_sha256: string} */
+    /** @return array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256: string} */
     public static function targetIdentity(Closure $target): array
     {
         $reflection = new ReflectionFunction($target);
@@ -73,19 +95,124 @@ final class ExecutionRecorder
         $root = rtrim(TestSuite::getInstance()->rootPath, '/\\').DIRECTORY_SEPARATOR;
         $normalizedFile = str_starts_with($file, $root) ? substr($file, strlen($root)) : $file;
         $source = implode('', array_slice($lines, $startLine - 1, $endLine - $startLine + 1));
+        $captures = $reflection->getStaticVariables();
+        ksort($captures);
 
         return [
             'file' => str_replace('\\', '/', $normalizedFile),
             'start_line' => $startLine,
             'end_line' => $endLine,
             'source_sha256' => hash('sha256', $source),
+            'captures_sha256' => hash('sha256', self::encoded(self::stableCaseValue($captures))),
         ];
     }
 
     /**
-     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string}  $targetIdentity
+     * @param  list<string>  $dependencies
+     * @return list<array{source: string, sha256: string}>
+     */
+    public static function dependencyIdentity(array $dependencies): array
+    {
+        $root = rtrim(TestSuite::getInstance()->rootPath, '/\\');
+        $identities = [];
+        $resolvedFiles = [];
+
+        foreach ($dependencies as $dependency) {
+            $candidate = null;
+
+            if (class_exists($dependency) || interface_exists($dependency) || trait_exists($dependency) || enum_exists($dependency)) {
+                $candidate = (new ReflectionClass($dependency))->getFileName();
+
+                if (! is_string($candidate)) {
+                    throw new RuntimeException(sprintf('Benchmark source dependency class [%s] has no readable source file.', $dependency));
+                }
+            } else {
+                $absolute = str_starts_with($dependency, '/')
+                    || preg_match('/^[A-Za-z]:[\\\\\/]/', $dependency) === 1
+                    || str_starts_with($dependency, '\\\\');
+                $candidate = $absolute ? $dependency : $root.DIRECTORY_SEPARATOR.$dependency;
+            }
+
+            $resolved = realpath($candidate);
+
+            if ($resolved === false || ! is_file($resolved) || ! is_readable($resolved)) {
+                throw new RuntimeException(sprintf('Benchmark source dependency [%s] must resolve to a readable file.', $dependency));
+            }
+
+            if (isset($resolvedFiles[$resolved])) {
+                throw new RuntimeException(sprintf(
+                    'Benchmark source dependencies [%s] and [%s] resolve to the same file.',
+                    $resolvedFiles[$resolved],
+                    $dependency,
+                ));
+            }
+
+            $contents = file_get_contents($resolved);
+
+            if ($contents === false) {
+                throw new RuntimeException(sprintf('Benchmark source dependency [%s] could not be read.', $dependency));
+            }
+
+            $resolvedFiles[$resolved] = $dependency;
+            $relative = str_starts_with($resolved, $root.DIRECTORY_SEPARATOR)
+                ? substr($resolved, strlen($root) + 1)
+                : $resolved;
+            $identities[] = [
+                'source' => str_replace('\\', '/', $relative),
+                'sha256' => hash('sha256', $contents),
+            ];
+        }
+
+        usort($identities, fn (array $left, array $right): int => $left['source'] <=> $right['source']);
+
+        return $identities;
+    }
+
+    /**
+     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256?: string}  $targetIdentity
+     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256?: string}|null  $evaluationIdentity
+     * @param  array<string, mixed>|null  $dependencyEvidence
+     * @param  list<array{source: string, sha256: string}>  $sourceDependencies
+     */
+    public static function trialFingerprint(
+        string $benchmark,
+        string $caseId,
+        string $configurationName,
+        Configuration $configuration,
+        array $targetIdentity,
+        ?array $evaluationIdentity,
+        ?array $dependencyEvidence = null,
+        array $sourceDependencies = [],
+    ): string {
+        return 'sha256:'.hash('sha256', self::encoded([
+            'benchmark' => $benchmark,
+            'target' => $targetIdentity,
+            'evaluation' => $evaluationIdentity,
+            'case_id' => $caseId,
+            'configuration' => [
+                'name' => $configurationName,
+                'provider' => $configuration->provider,
+                'model' => $configuration->model,
+                'options' => $configuration->options,
+                'settings' => $configuration->settings,
+            ],
+            'dependencies' => [
+                'application' => $dependencyEvidence,
+                'sources' => $sourceDependencies,
+            ],
+            'schema_version' => Scorecard::SCHEMA_VERSION,
+            'package' => [
+                'name' => Scorecard::PACKAGE_NAME,
+                'version' => '0.1.0-dev',
+            ],
+        ]));
+    }
+
+    /**
+     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256?: string}  $targetIdentity
      * @param  list<AgentObservation>  $observations
      * @param  list<PestEvalObservation>  $scorerObservations
+     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256?: string}|null  $evaluationIdentity
      */
     public static function record(
         string $benchmark,
@@ -101,48 +228,18 @@ final class ExecutionRecorder
         array $observations = [],
         array $scorerObservations = [],
         ?int $repeat = null,
+        ?string $fingerprint = null,
+        ?BenchmarkDeclaration $declaration = null,
+        ?array $evaluationIdentity = null,
     ): void {
-        $mode = $observations !== [] && array_all(
-            $observations,
-            fn (AgentObservation $observation): bool => $observation->mode === ExecutionMode::Live,
-        ) ? ExecutionMode::Live : ExecutionMode::Simulated;
-        $fingerprint = 'sha256:'.hash('sha256', self::encoded([
-            'benchmark' => $benchmark,
-            'target' => $targetIdentity,
-            'case_id' => $caseId,
-            'configuration' => [
-                'name' => $configurationName,
-                'provider' => $configuration->provider,
-                'model' => $configuration->model,
-                'options' => $configuration->options,
-                'settings' => $configuration->settings,
-            ],
-            'execution_mode' => $mode->value,
-            'runtime_observations' => array_map(
-                fn (AgentObservation $observation): array => [
-                    'mode' => $observation->mode->value,
-                    'requested_provider' => $observation->requestedProvider,
-                    'requested_model' => $observation->requestedModel,
-                    'effective_provider' => $observation->effectiveProvider,
-                    'effective_model' => $observation->effectiveModel,
-                ],
-                $observations,
-            ),
-            'scorers' => array_map(
-                fn (PestEvalObservation $observation): array => [
-                    'name' => $observation->scorer,
-                    'threshold' => $observation->threshold,
-                    'sample' => $observation->sample,
-                    'samples' => $observation->samples,
-                ],
-                $scorerObservations,
-            ),
-            'schema_version' => Scorecard::SCHEMA_VERSION,
-            'package' => [
-                'name' => Scorecard::PACKAGE_NAME,
-                'version' => '0.1.0-dev',
-            ],
-        ]));
+        $fingerprint ??= self::trialFingerprint(
+            $benchmark,
+            $caseId,
+            $configurationName,
+            $configuration,
+            $targetIdentity,
+            $evaluationIdentity,
+        );
         if ($repeat === null) {
             $repeatKey = $benchmark."\0".$caseId."\0".$configurationName;
             $repeat = (self::$repeats[$repeatKey] ?? 0) + 1;
@@ -153,6 +250,9 @@ final class ExecutionRecorder
             throw new InvalidArgumentException('Trial repeat must be at least 1.');
         }
         self::$contexts[$benchmark] = $context;
+        if ($declaration instanceof BenchmarkDeclaration) {
+            self::$declarations[$benchmark] = $declaration;
+        }
         $pricingQuotes = array_map(self::quote(...), $observations);
 
         self::$trials[] = new RecordedTrial(
@@ -168,6 +268,87 @@ final class ExecutionRecorder
             observations: $observations,
             pricingQuotes: $pricingQuotes,
             scorerObservations: $scorerObservations,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $trial
+     */
+    public static function reuse(
+        string $benchmark,
+        array $trial,
+        mixed $output,
+        ?BenchmarkDeclaration $declaration = null,
+    ): void {
+        $caseId = $trial['case_id'] ?? null;
+        $configuration = $trial['configuration'] ?? null;
+        $repeat = $trial['repeat'] ?? null;
+        $fingerprint = $trial['fingerprint'] ?? null;
+        $results = $trial['results'] ?? null;
+
+        if (! is_string($caseId)
+            || ! is_string($configuration)
+            || ! is_int($repeat)
+            || ! is_string($fingerprint)
+            || ! is_array($results)) {
+            throw new RuntimeException('Completed trial contains invalid reusable evidence.');
+        }
+
+        self::$contexts[$benchmark] = $declaration?->context;
+        if ($declaration instanceof BenchmarkDeclaration) {
+            self::$declarations[$benchmark] = $declaration;
+        }
+
+        self::$trials[] = new RecordedTrial(
+            benchmark: $benchmark,
+            caseId: $caseId,
+            configuration: $configuration,
+            repeat: $repeat,
+            fingerprint: $fingerprint,
+            identity: new ModelIdentityEvidence(null, null, null, null),
+            latencyMs: 0.0,
+            passed: true,
+            output: self::jsonSafe($output),
+            stableResults: self::stableRecords($results, 'Completed trial contains invalid result evidence.'),
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $sourceTrial
+     * @param  list<PestEvalObservation>  $scorerObservations
+     */
+    public static function recordReplay(
+        string $benchmark,
+        string $caseId,
+        string $configuration,
+        int $repeat,
+        string $fingerprint,
+        mixed $output,
+        array $sourceTrial,
+        array $scorerObservations,
+        BenchmarkDeclaration $declaration,
+        bool $passed,
+    ): void {
+        $results = $sourceTrial['results'] ?? null;
+
+        if (! is_array($results) || ! is_array($results[0] ?? null) || ! is_array($results[0]['measurements'] ?? null)) {
+            throw new RuntimeException('Replay trial contains invalid target measurements.');
+        }
+
+        self::$contexts[$benchmark] = $declaration->context;
+        self::$declarations[$benchmark] = $declaration;
+        self::$trials[] = new RecordedTrial(
+            benchmark: $benchmark,
+            caseId: $caseId,
+            configuration: $configuration,
+            repeat: $repeat,
+            fingerprint: $fingerprint,
+            identity: new ModelIdentityEvidence(null, null, null, null),
+            latencyMs: 0.0,
+            passed: $passed,
+            output: self::jsonSafe($output),
+            scorerObservations: $scorerObservations,
+            sourceMeasurements: self::stableRecords($results[0]['measurements'], 'Replay trial contains invalid target measurements.'),
         );
     }
 
@@ -191,16 +372,41 @@ final class ExecutionRecorder
             $scorecards[] = self::writeBenchmark($paths, $benchmark, $trials);
         }
 
-        self::reset();
+        self::resetActive();
 
         return $scorecards;
     }
 
     public static function reset(): void
     {
+        self::resetActive();
+        self::$evaluations = [];
+        self::$references = [];
+        self::$referenceEvaluations = [];
+    }
+
+    public static function evaluation(Scorecard $scorecard): ?RegressionEvaluation
+    {
+        return self::$evaluations[$scorecard->id->value] ?? null;
+    }
+
+    public static function reference(Scorecard $scorecard): ?string
+    {
+        return self::$references[$scorecard->id->value] ?? null;
+    }
+
+    /** @return array<string, RegressionEvaluation> */
+    public static function referenceEvaluations(Scorecard $scorecard): array
+    {
+        return self::$referenceEvaluations[$scorecard->id->value] ?? [];
+    }
+
+    private static function resetActive(): void
+    {
         self::$trials = [];
         self::$repeats = [];
         self::$contexts = [];
+        self::$declarations = [];
     }
 
     /** @param list<RecordedTrial> $recorded */
@@ -240,12 +446,72 @@ final class ExecutionRecorder
 
         (new RunBundle($paths, $runId))->write($scorecard, new ReplayPayload($replay));
 
+        $declaration = self::$declarations[$benchmark] ?? new BenchmarkDeclaration;
+        self::$evaluations[$scorecard->id->value] = (new GateEvaluator)->evaluate(
+            current: $scorecard,
+            declaration: $declaration,
+            baselineName: Plugin::baselineName(),
+            paths: $paths,
+        );
+
+        if ($declaration->reference !== null) {
+            self::$references[$scorecard->id->value] = $declaration->reference;
+            self::$referenceEvaluations[$scorecard->id->value] = self::evaluateReferences($scorecard, $declaration);
+        }
+
         return $scorecard;
+    }
+
+    /** @return array<string, RegressionEvaluation> */
+    private static function evaluateReferences(Scorecard $scorecard, BenchmarkDeclaration $declaration): array
+    {
+        if ($declaration->reference === null) {
+            return [];
+        }
+
+        $aggregator = new ScorecardEvidence;
+        $policy = $declaration->regressionPolicy ?? RegressionPolicy::evidenceOnly();
+        $scorecardData = $scorecard->toArray();
+        $evaluations = [];
+
+        try {
+            $reference = $aggregator->aggregate($scorecardData, $declaration->reference);
+        } catch (Throwable $exception) {
+            return ['reference' => new RegressionEvaluation(
+                status: RegressionStatus::NotEvaluable,
+                failures: [$exception->getMessage()],
+            )];
+        }
+
+        foreach ($declaration->configurations as $configuration) {
+            if ($configuration === $declaration->reference) {
+                continue;
+            }
+
+            try {
+                $evaluations[$configuration] = (new RegressionEvaluator)->evaluate(
+                    current: $aggregator->aggregate($scorecardData, $configuration),
+                    historical: $reference,
+                    policy: $policy,
+                );
+            } catch (Throwable $exception) {
+                $evaluations[$configuration] = new RegressionEvaluation(
+                    status: RegressionStatus::NotEvaluable,
+                    failures: [$exception->getMessage()],
+                );
+            }
+        }
+
+        return $evaluations;
     }
 
     /** @return list<Result> */
     private static function results(RecordedTrial $record): array
     {
+        if ($record->stableResults !== null) {
+            return self::resultsFromStable($record->stableResults);
+        }
+
         $measurements = self::measurements($record);
         $results = [new Result(
             id: EvidenceId::generate('res'),
@@ -279,6 +545,10 @@ final class ExecutionRecorder
     /** @return list<Measurement> */
     private static function measurements(RecordedTrial $record): array
     {
+        if ($record->sourceMeasurements !== null) {
+            return self::measurementsFromStable($record->sourceMeasurements, $record->fingerprint, true);
+        }
+
         if ($record->observations === []) {
             return [new Measurement(
                 component: Component::Target,
@@ -318,6 +588,130 @@ final class ExecutionRecorder
         }
 
         return $measurements;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $stableResults
+     * @return list<Result>
+     */
+    private static function resultsFromStable(array $stableResults): array
+    {
+        $results = [];
+
+        foreach ($stableResults as $result) {
+            if (! is_string($result['scorer'] ?? null)
+                || ! is_array($result['measurements'] ?? null)) {
+                throw new RuntimeException('Completed trial contains invalid result evidence.');
+            }
+
+            $results[] = new Result(
+                id: EvidenceId::generate('res'),
+                scorer: $result['scorer'],
+                score: is_float($result['score'] ?? null) || is_int($result['score'] ?? null) ? (float) $result['score'] : null,
+                reasoning: is_string($result['reasoning'] ?? null) ? $result['reasoning'] : null,
+                passed: is_bool($result['passed'] ?? null) ? $result['passed'] : null,
+                measurements: self::measurementsFromStable(
+                    self::stableRecords($result['measurements'], 'Completed trial contains invalid measurement evidence.'),
+                    '',
+                    false,
+                ),
+                threshold: is_float($result['threshold'] ?? null) || is_int($result['threshold'] ?? null) ? (float) $result['threshold'] : null,
+                sample: is_int($result['sample'] ?? null) ? $result['sample'] : null,
+                samples: is_int($result['samples'] ?? null) ? $result['samples'] : null,
+            );
+        }
+
+        return $results;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $stableMeasurements
+     * @return list<Measurement>
+     */
+    private static function measurementsFromStable(array $stableMeasurements, string $trialFingerprint, bool $recorded): array
+    {
+        $measurements = [];
+
+        foreach ($stableMeasurements as $index => $measurement) {
+            $requested = $measurement['requested_model'] ?? null;
+            $effective = $measurement['effective_model'] ?? null;
+            $pricing = $measurement['pricing'] ?? null;
+
+            if (! is_string($measurement['component'] ?? null)
+                || ! is_string($measurement['mode'] ?? null)
+                || ! is_float($measurement['latency_ms'] ?? null) && ! is_int($measurement['latency_ms'] ?? null)
+                || ! is_array($measurement['usage'] ?? null)
+                || ! is_int($measurement['retries'] ?? null)
+                || ! is_array($pricing)
+                || ! is_string($pricing['completeness'] ?? null)
+                || ! is_array($pricing['snapshot'] ?? null)
+                || ! is_string($measurement['fingerprint'] ?? null)) {
+                throw new RuntimeException('Saved trial contains invalid measurement evidence.');
+            }
+
+            $sourceMode = ExecutionMode::from($measurement['mode']);
+            $mode = $recorded && $sourceMode !== ExecutionMode::Simulated
+                ? ExecutionMode::Recorded
+                : $sourceMode;
+            $fingerprint = $recorded
+                ? 'sha256:'.hash('sha256', self::encoded([
+                    'trial' => $trialFingerprint,
+                    'component' => $measurement['component'],
+                    'attempt' => $index,
+                    'mode' => $mode->value,
+                    'requested_model' => $requested,
+                    'effective_model' => $effective,
+                ]))
+                : $measurement['fingerprint'];
+
+            $measurements[] = new Measurement(
+                component: Component::from($measurement['component']),
+                mode: $mode,
+                requestedProvider: is_array($requested) && is_string($requested['provider'] ?? null) ? $requested['provider'] : null,
+                requestedModel: is_array($requested) && is_string($requested['model'] ?? null) ? $requested['model'] : null,
+                effectiveProvider: is_array($effective) && is_string($effective['provider'] ?? null) ? $effective['provider'] : null,
+                effectiveModel: is_array($effective) && is_string($effective['model'] ?? null) ? $effective['model'] : null,
+                latencyMs: (float) $measurement['latency_ms'],
+                usage: $measurement['usage'],
+                retries: $measurement['retries'],
+                pricingCompleteness: PricingCompleteness::from($pricing['completeness']),
+                pricingSnapshot: $pricing['snapshot'],
+                fingerprint: $fingerprint,
+            );
+        }
+
+        if ($measurements === []) {
+            throw new RuntimeException('Saved trial contains no target measurements.');
+        }
+
+        return $measurements;
+    }
+
+    /**
+     * @param  array<mixed>  $values
+     * @return list<array<string, mixed>>
+     */
+    private static function stableRecords(array $values, string $message): array
+    {
+        $records = [];
+
+        foreach ($values as $value) {
+            if (! is_array($value)) {
+                throw new RuntimeException($message);
+            }
+
+            $record = [];
+
+            foreach ($value as $key => $item) {
+                if (is_string($key)) {
+                    $record[$key] = $item;
+                }
+            }
+
+            $records[] = $record;
+        }
+
+        return $records;
     }
 
     private static function quote(AgentObservation $observation): CostQuote

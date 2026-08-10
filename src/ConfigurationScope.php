@@ -115,6 +115,42 @@ final class ConfigurationScope
         }
     }
 
+    /** @return array<string, mixed> */
+    public function fingerprint(Configuration $configuration): array
+    {
+        $settings = $this->validatedSettings($configuration);
+        $dependencies = [
+            $this->providerKey => $configuration->provider ?? $this->repository->get($this->providerKey),
+            $this->modelKey => $configuration->model ?? $this->repository->get($this->modelKey),
+        ];
+
+        if ($this->optionsKey !== null) {
+            $options = $this->repository->get($this->optionsKey);
+
+            if ($configuration->options === []) {
+                $dependencies[$this->optionsKey] = $options;
+            } else {
+                if (! is_array($options)) {
+                    throw new RuntimeException(sprintf('Application configuration [%s] must contain an array before it can be fingerprinted.', $this->optionsKey));
+                }
+
+                $dependencies[$this->optionsKey] = array_replace($options, $configuration->options);
+            }
+        } elseif ($configuration->options !== []) {
+            throw new InvalidArgumentException('Model options require an application configuration key in benchmarks()->configure(...).');
+        }
+
+        foreach ($this->supportedSettings as $setting) {
+            $dependencies[$setting] = array_key_exists($setting, $settings)
+                ? $settings[$setting]
+                : $this->repository->get($setting);
+        }
+
+        ksort($dependencies);
+
+        return $this->stableDependencies($dependencies);
+    }
+
     /**
      * @return array<string, bool|float|int|string|null|array<mixed>>
      */
@@ -156,5 +192,51 @@ final class ConfigurationScope
         }
 
         return $value;
+    }
+
+    /**
+     * @param  array<mixed>  $dependencies
+     * @return array<string, mixed>
+     */
+    private function stableDependencies(array $dependencies): array
+    {
+        $stable = [];
+
+        foreach ($dependencies as $key => $value) {
+            if (! is_string($key) || $key === '') {
+                throw new RuntimeException('Application configuration dependency keys must be non-empty strings.');
+            }
+
+            $stable[$key] = $this->stableDependencyValue($value, $key);
+        }
+
+        return $stable;
+    }
+
+    private function stableDependencyValue(mixed $value, string $key): mixed
+    {
+        if (is_float($value) && ! is_finite($value)) {
+            throw new RuntimeException(sprintf('Application configuration dependency [%s] must be JSON-safe.', $key));
+        }
+
+        if (is_scalar($value) || $value === null) {
+            return $value;
+        }
+
+        if (! is_array($value)) {
+            throw new RuntimeException(sprintf('Application configuration dependency [%s] must be JSON-safe.', $key));
+        }
+
+        $stable = [];
+
+        foreach ($value as $nestedKey => $nestedValue) {
+            $stable[$nestedKey] = $this->stableDependencyValue($nestedValue, $key);
+        }
+
+        if (! array_is_list($stable)) {
+            ksort($stable);
+        }
+
+        return $stable;
     }
 }
