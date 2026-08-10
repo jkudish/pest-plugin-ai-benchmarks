@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use GuzzleHttp\Psr7\Response as Psr7Response;
+use Illuminate\Http\Client\Response as HttpResponse;
 use Jkudish\PestAiBenchmarks\LaravelAi\BenchmarkAgentMiddleware;
 use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
@@ -158,6 +160,36 @@ it('marks Laravel AI fake gateway observations as simulated', function (): void 
 
     expect($observations)->toHaveCount(1)
         ->and($observations[0]->mode)->toBe(ExecutionMode::Simulated);
+});
+
+it('captures authoritative provider cost from a synchronous OpenRouter response', function (): void {
+    $provider = Mockery::mock(TextProvider::class);
+    $provider->shouldReceive('name')->once()->andReturn('openrouter');
+    $prompt = new AgentPrompt(
+        agent: Mockery::mock(Agent::class),
+        prompt: 'Extract this receipt.',
+        attachments: [],
+        provider: $provider,
+        model: 'openai/gpt-test',
+    );
+    $response = (new AgentResponse(
+        invocationId: 'invocation-cost',
+        text: 'ok',
+        usage: new Usage(promptTokens: 10, completionTokens: 2),
+        meta: new Meta(provider: 'openrouter', model: 'openai/gpt-test'),
+    ))->withRawResponse(new HttpResponse(new Psr7Response(
+        body: json_encode(['usage' => ['cost' => 0.0000042]], JSON_THROW_ON_ERROR),
+        headers: ['Content-Type' => 'application/json'],
+    )));
+
+    RuntimeObservationCollector::begin();
+    (new BenchmarkAgentMiddleware)->handle($prompt, fn (): AgentResponse => $response);
+    $observation = RuntimeObservationCollector::finish()[0];
+
+    expect($observation->providerReportedCost?->toArray())->toBe([
+        'amount' => '0.0000042',
+        'currency' => 'USD',
+    ]);
 });
 
 it('rejects nested observation spans', function (): void {

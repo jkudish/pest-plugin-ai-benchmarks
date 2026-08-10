@@ -75,6 +75,7 @@ it('writes live observations with usage attempts and catalog-derived pricing', f
                 usage: new NormalizedUsage(inputTokens: 120, outputTokens: 30),
                 latencyMs: 35.25,
                 succeeded: true,
+                providerReportedCost: new Money('0.0009'),
             ),
         ],
     );
@@ -117,6 +118,10 @@ it('writes live observations with usage attempts and catalog-derived pricing', f
         ->and($resolved[0]->identity->toArray())->toBe([
             'provider' => 'google',
             'model' => 'gemini-effective',
+        ])
+        ->and($resolved[0]->providerReportedCost?->toArray())->toBe([
+            'amount' => '0.0009',
+            'currency' => 'USD',
         ]);
 });
 

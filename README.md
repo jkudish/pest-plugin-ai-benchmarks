@@ -128,9 +128,7 @@ final class BenchmarkReceiptOcrAgent extends ReceiptOcrAgent implements HasMiddl
 }
 ```
 
-The middleware is inert outside an active benchmark body. Real calls are recorded as `live`; Laravel AI fake-gateway calls and uninstrumented benchmark bodies are `simulated` and cannot be promoted as baselines.
-
-Laravel AI currently exposes provider/model identity and token usage but not authoritative monetary cost. The plugin therefore resolves cost from usage through `jkudish/laravel-ai-pricing`; it will prefer provider-reported cost when Laravel AI exposes that evidence publicly.
+The middleware is inert outside an active `benchmark()` body. Real calls made through an instrumented agent are recorded as `live`; Laravel AI fake-gateway calls and uninstrumented benchmark bodies remain `simulated` and cannot be promoted as baselines. Runtime response metadata is authoritative for the effective provider and model, even when it differs from the requested configuration. Pricing is calculated through `jkudish/laravel-ai-pricing`. Synchronous OpenRouter responses retain provider-reported `usage.cost` across every generation step; other providers use normalized usage and catalog pricing when their responses do not include money. Partial step cost is never presented as an authoritative total.
 
 ## Runs and private evidence
 

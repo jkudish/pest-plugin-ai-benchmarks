@@ -739,6 +739,7 @@ final class ExecutionRecorder
                     effectiveModel: $observation->effectiveModel,
                 ),
                 usage: $observation->usage,
+                providerReportedCost: $observation->providerReportedCost,
             ));
         } catch (Throwable) {
             return CostQuote::unavailable();

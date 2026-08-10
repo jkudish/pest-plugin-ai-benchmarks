@@ -6,10 +6,13 @@ namespace Jkudish\PestAiBenchmarks\LaravelAi;
 
 use Closure;
 use Illuminate\Container\Container;
+use Jkudish\LaravelAiPricing\Adapters\LaravelAiProviderCostExtractor;
+use Jkudish\LaravelAiPricing\ValueObjects\Money;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
 use Laravel\Ai\AiManager;
 use Laravel\Ai\Prompts\AgentPrompt;
+use Laravel\Ai\Providers\Provider as LaravelAiProvider;
 use Laravel\Ai\Responses\AgentResponse;
 use Throwable;
 
@@ -38,6 +41,7 @@ final class BenchmarkAgentMiddleware
                 latencyMs: self::elapsedMilliseconds($startedAt),
                 succeeded: true,
                 mode: $mode,
+                providerReportedCost: self::providerReportedCost($prompt, $response),
             ));
 
             return $response;
@@ -70,6 +74,16 @@ final class BenchmarkAgentMiddleware
                 ? ['cache_write_input_tokens' => $cacheWriteInputTokens]
                 : [],
         );
+    }
+
+    private static function providerReportedCost(AgentPrompt $prompt, AgentResponse $response): ?Money
+    {
+        $provider = $prompt->provider();
+        $driver = $provider instanceof LaravelAiProvider ? $provider->driver() : $response->meta->provider;
+
+        return is_string($driver)
+            ? (new LaravelAiProviderCostExtractor)->extract($response, $driver)
+            : null;
     }
 
     /** @return array{0: string|null, 1: string|null} */
