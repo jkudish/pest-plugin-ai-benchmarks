@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use GuzzleHttp\Psr7\Response as Psr7Response;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Http\Client\Response as HttpResponse;
 use Jkudish\PestAiBenchmarks\LaravelAi\BenchmarkAgentMiddleware;
 use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
@@ -11,6 +12,7 @@ use Laravel\Ai\AiManager;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\Providers\TextProvider;
 use Laravel\Ai\Prompts\AgentPrompt;
+use Laravel\Ai\Providers\OpenRouterProvider;
 use Laravel\Ai\Responses\AgentResponse;
 use Laravel\Ai\Responses\Data\Meta;
 use Laravel\Ai\Responses\Data\Usage;
@@ -22,6 +24,7 @@ afterEach(function (): void {
 it('captures truthful Laravel AI identity usage and latency during an active benchmark', function (): void {
     $provider = Mockery::mock(TextProvider::class);
     $provider->shouldReceive('name')->once()->andReturn('openrouter');
+    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
     $prompt = new AgentPrompt(
         agent: Mockery::mock(Agent::class),
         prompt: 'Extract this receipt.',
@@ -59,7 +62,7 @@ it('captures truthful Laravel AI identity usage and latency during an active ben
         ->and($observations[0]->effectiveProvider)->toBe('google')
         ->and($observations[0]->effectiveModel)->toBe('gemini-effective')
         ->and($observations[0]->usage->toArray())->toBe([
-            'input_tokens' => 120,
+            'input_tokens' => 85,
             'output_tokens' => 30,
             'cached_input_tokens' => 20,
             'reasoning_tokens' => 10,
@@ -106,6 +109,7 @@ it('records failed attempts and rethrows the original exception', function (): v
 it('is inert outside an active benchmark and tolerates incomplete response metadata', function (): void {
     $provider = Mockery::mock(TextProvider::class);
     $provider->shouldReceive('name')->once()->andReturn('openrouter');
+    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
     $prompt = new AgentPrompt(
         agent: Mockery::mock(Agent::class),
         prompt: 'Extract this receipt.',
@@ -135,6 +139,7 @@ it('is inert outside an active benchmark and tolerates incomplete response metad
 it('marks Laravel AI fake gateway observations as simulated', function (): void {
     $provider = Mockery::mock(TextProvider::class);
     $provider->shouldReceive('name')->once()->andReturn('openrouter');
+    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
     $agent = Mockery::mock(Agent::class);
     $prompt = new AgentPrompt(
         agent: $agent,
@@ -163,8 +168,10 @@ it('marks Laravel AI fake gateway observations as simulated', function (): void 
 });
 
 it('captures authoritative provider cost from a synchronous OpenRouter response', function (): void {
-    $provider = Mockery::mock(TextProvider::class);
-    $provider->shouldReceive('name')->once()->andReturn('openrouter');
+    $provider = new OpenRouterProvider(
+        config: ['name' => 'router-alias', 'driver' => 'openrouter', 'key' => 'test-key'],
+        events: $this->app->make(Dispatcher::class),
+    );
     $prompt = new AgentPrompt(
         agent: Mockery::mock(Agent::class),
         prompt: 'Extract this receipt.',
@@ -176,7 +183,7 @@ it('captures authoritative provider cost from a synchronous OpenRouter response'
         invocationId: 'invocation-cost',
         text: 'ok',
         usage: new Usage(promptTokens: 10, completionTokens: 2),
-        meta: new Meta(provider: 'openrouter', model: 'openai/gpt-test'),
+        meta: new Meta(provider: 'router-alias', model: 'openai/gpt-test'),
     ))->withRawResponse(new HttpResponse(new Psr7Response(
         body: json_encode(['usage' => ['cost' => 0.0000042]], JSON_THROW_ON_ERROR),
         headers: ['Content-Type' => 'application/json'],
@@ -190,6 +197,34 @@ it('captures authoritative provider cost from a synchronous OpenRouter response'
         'amount' => '0.0000042',
         'currency' => 'USD',
     ]);
+});
+
+it('does not fail a successful benchmark when provider pricing metadata is malformed', function (): void {
+    $provider = Mockery::mock(TextProvider::class);
+    $provider->shouldReceive('name')->once()->andReturn('custom');
+    $provider->shouldReceive('driver')->once()->andThrow(new RuntimeException('Malformed driver configuration.'));
+    $prompt = new AgentPrompt(
+        agent: Mockery::mock(Agent::class),
+        prompt: 'Extract this receipt.',
+        attachments: [],
+        provider: $provider,
+        model: 'model',
+    );
+    $response = new AgentResponse(
+        invocationId: 'invocation-malformed-pricing',
+        text: 'ok',
+        usage: new Usage(promptTokens: 10, completionTokens: 2),
+        meta: new Meta(provider: 'custom', model: 'model'),
+    );
+
+    RuntimeObservationCollector::begin();
+    $actual = (new BenchmarkAgentMiddleware)->handle($prompt, fn (): AgentResponse => $response);
+    $observation = RuntimeObservationCollector::finish()[0];
+
+    expect($actual)->toBe($response)
+        ->and($observation->succeeded)->toBeTrue()
+        ->and($observation->providerReportedCost)->toBeNull()
+        ->and($observation->usage->inputTokens)->toBe(10);
 });
 
 it('rejects nested observation spans', function (): void {
