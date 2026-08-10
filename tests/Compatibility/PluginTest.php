@@ -294,6 +294,7 @@ it('fails closed when distinct benchmarks share a description', function (): voi
         PHP_BINARY,
         $root.'/vendor/bin/pest',
         __DIR__.'/Fixtures/DuplicateDescriptionBenchmark.php',
+        __DIR__.'/Fixtures/DuplicateDescriptionSecondBenchmark.php',
         '--evals',
         '--ci',
     ], $root);
