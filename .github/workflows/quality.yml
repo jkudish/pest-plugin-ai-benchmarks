@@ -1,0 +1,54 @@
+name: Quality
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout package
+        uses: actions/checkout@v7
+        with:
+          path: pest-plugin-ai-benchmarks
+          persist-credentials: false
+
+      - name: Checkout pricing package
+        uses: actions/checkout@v7
+        with:
+          repository: jkudish/laravel-ai-pricing
+          ref: main
+          path: laravel-ai-pricing
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          coverage: none
+
+      - uses: ramsey/composer-install@v4
+        with:
+          working-directory: pest-plugin-ai-benchmarks
+
+      - name: Validate Composer metadata
+        working-directory: pest-plugin-ai-benchmarks
+        run: composer validate --strict
+
+      - name: Audit dependencies
+        working-directory: pest-plugin-ai-benchmarks
+        run: composer audit
+
+      - name: Check formatting
+        working-directory: pest-plugin-ai-benchmarks
+        run: composer lint:check
+
+      - name: Run PHPStan and Larastan
+        working-directory: pest-plugin-ai-benchmarks
+        run: composer analyse -- --error-format=github
+
+      - name: Run architecture tests
+        working-directory: pest-plugin-ai-benchmarks
+        run: vendor/bin/pest tests/ArchTest.php --ci

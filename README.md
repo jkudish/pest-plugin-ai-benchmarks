@@ -1,27 +1,41 @@
-# Pest AI Benchmarks
+<h1 align="center">Pest AI Benchmarks</h1>
 
-Comparative AI benchmarks built on Pest 5 and Pest Evals. The plugin preserves Pest's datasets, expectations, repetitions, filtering, and failure behavior while adding named model/application configurations and durable benchmark evidence.
+<p align="center">
+  <strong>Compare models, prompts, and application configurations with Pest-native tests, durable evidence, replay, baselines, and CI regression gates.</strong>
+</p>
 
-> This package is under private pre-release validation and is not yet published.
+<p align="center">
+  <a href="https://github.com/jkudish/pest-plugin-ai-benchmarks/actions/workflows/run-tests.yml"><img src="https://github.com/jkudish/pest-plugin-ai-benchmarks/actions/workflows/run-tests.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/jkudish/pest-plugin-ai-benchmarks/actions/workflows/quality.yml"><img src="https://github.com/jkudish/pest-plugin-ai-benchmarks/actions/workflows/quality.yml/badge.svg" alt="Quality"></a>
+  <a href="https://packagist.org/packages/jkudish/pest-plugin-ai-benchmarks"><img src="https://img.shields.io/packagist/v/jkudish/pest-plugin-ai-benchmarks" alt="Packagist version"></a>
+  <a href="https://packagist.org/packages/jkudish/pest-plugin-ai-benchmarks"><img src="https://img.shields.io/packagist/dt/jkudish/pest-plugin-ai-benchmarks" alt="Packagist downloads"></a>
+  <img src="https://img.shields.io/packagist/php-v/jkudish/pest-plugin-ai-benchmarks" alt="PHP version">
+  <a href="LICENSE.md"><img src="https://img.shields.io/github/license/jkudish/pest-plugin-ai-benchmarks" alt="License"></a>
+</p>
 
-## Requirements
+Pest AI Benchmarks preserves Pest's datasets, expectations, repetitions, filtering, dependencies, and failure behavior while adding one comparative configuration axis and trustworthy evidence across runs.
 
-- PHP 8.4 or newer
-- Laravel 13 for the standard Pest Laravel integration
-- Pest 5
-- Pest Evals 5 with the scorer-result callback proposed in `pestphp/pest-plugin-evals#4`
+It builds on [Pest Evals](https://github.com/pestphp/pest-plugin-evals) for scoring and [Laravel AI Pricing](https://github.com/jkudish/laravel-ai-pricing) for cost attribution. It does not introduce competing scorer, judge, case, candidate, or sampling APIs.
 
-The package keeps Illuminate 12-compatible contracts so applications with a custom test bootstrap are not needlessly excluded. However, `pestphp/pest-plugin-laravel` 5 currently requires Laravel 13.23 or newer, so the conventional Laravel 12 + Pest Laravel plugin combination cannot be supported or tested until that upstream constraint changes.
+> **Pre-release:** version 0.1 is feature-complete, but public installation remains gated on the scorer-result callback in [Pest Evals PR #4](https://github.com/pestphp/pest-plugin-evals/pull/4) being released upstream.
 
-## Example
+## Installation
+
+Once version 0.1 is published:
+
+```bash
+composer require --dev jkudish/pest-plugin-ai-benchmarks
+```
+
+## Quick start
 
 ```php
 use Jkudish\PestAiBenchmarks\Configuration;
 
 benchmark('extracts receipts', function (array $case): array {
-    $result = app(ReceiptOcrService::class)->extract($case['file']);
-
-    return $result->toArray();
+    return app(ReceiptOcrService::class)
+        ->extract($case['file'])
+        ->toArray();
 })
     ->with('receipt corpus')
     ->configurations([
@@ -35,8 +49,10 @@ benchmark('extracts receipts', function (array $case): array {
         ]),
     ])
     ->evaluate(function (array $output, array $case): void {
-        expect($output['merchant_name'])->toBe($case['expected']['merchant_name'])
-            ->and($output['total_amount'])->toBe($case['expected']['total_amount']);
+        expect($output['merchant_name'])
+            ->toBe($case['expected']['merchant_name'])
+            ->and($output['total_amount'])
+            ->toBe($case['expected']['total_amount']);
     })
     ->dependsOn([
         ReceiptOcrService::class,
@@ -45,55 +61,30 @@ benchmark('extracts receipts', function (array $case): array {
     ->repeat(3);
 ```
 
-Benchmarks are skipped during ordinary Pest runs before their test bodies execute. Run all benchmarks explicitly through Pest Evals, or select one by name:
+Ordinary Pest runs skip benchmark bodies before they execute. Opt in explicitly:
 
 ```bash
 ./vendor/bin/pest --evals
 ./vendor/bin/pest --evals --benchmark='extracts receipts'
 ```
 
-The target callback returns a JSON-safe output. `evaluate()` is the reusable expectation boundary: it receives that output followed by the original dataset arguments, and may use ordinary Pest expectations or Pest Evals expectations such as `toPassScorer()`. It is not a competing scorer API. The same callback runs after a live target and when a private saved output is replayed.
+## What it adds
 
-### Replay, resume, and historical gates
+| Capability | What it provides |
+| --- | --- |
+| Configurations | Compare production, model, options, and application-setting changes |
+| Pest compatibility | Keep native datasets, expectations, repetitions, groups, dependencies, and filtering |
+| Live observations | Record requested/effective model identity, usage, latency, failures, and fallbacks |
+| Durable runs | Write versioned scorecards plus private replay data |
+| Replay | Rerun evaluation against saved output without calling the target or provider |
+| Resume | Reuse only compatible, completed output and rerun its evaluation |
+| Baselines | Promote sanitized live evidence to a named historical reference |
+| Regression gates | Fail CI on compatible pass-rate, latency, or cost regressions |
+| Safety | Keep normal test runs offline and reject unsafe or ambiguous evidence reuse |
 
-Every completed eval writes a run ID in `storage/app/ai-evals/runs/`. Replay reruns `evaluate()` against private saved outputs without entering application configuration scope or invoking the target/provider path:
+## Configure your application
 
-```bash
-./vendor/bin/pest --evals --benchmark-replay='20260809T120000Z-abc123'
-```
-
-Resume reuses target output only from compatible trials whose primary and evaluation evidence passed. It always reruns `evaluate()` against reused output, and invokes the target again for missing, failed, or incomplete saved trials:
-
-```bash
-./vendor/bin/pest --evals --benchmark-resume='20260809T120000Z-abc123'
-```
-
-Target and `evaluate()` source identities, JSON-safe closure captures, cases, declared configurations, resolved production application dependencies, and package/schema identity are fingerprinted before execution. Delegated production code is intentionally not discovered through a broad workspace scan: list every class or file used behind the target with `dependsOn([...])` so its source-content hash participates in safe replay and resume. Missing, unreadable, duplicated, or ambiguous dependencies fail closed. Replay and resume fail closed before target execution if a matching saved trial has a different fingerprint. Non-JSON-safe closure captures are rejected. Runtime provider/model identity remains in measurement fingerprints.
-
-Promote a completed run through the public API. Promotion copies only strict metric and identity evidence, removes scorecard context and scorer reasoning, and accepts only directly observed `live` measurements. Simulated and `recorded` measurements are rejected because the unchanged v0.1 schema cannot prove their full ancestry:
-
-```php
-benchmarks()->promote(
-    run: '20260809T120000Z-abc123',
-    baseline: 'production',
-);
-```
-
-Select that baseline for a historical comparison:
-
-```bash
-./vendor/bin/pest --evals --benchmark-baseline=production
-```
-
-`reference('production')` identifies same-run comparative evidence. `failWhen()` gates are enforced only when `--benchmark-baseline` explicitly selects a compatible historical scorecard; without that flag, results remain evidence-only. A failed or not-evaluable explicit gate returns a nonzero process exit.
-
-Benchmark eval runs are deliberately serial in version 0.1. Combining `--evals` with `--parallel` or `-p` fails before execution because partial worker scorecards cannot be truthfully aggregated yet.
-
-`benchmark()` is the only benchmark declaration form. The package does not provide competing scorer, judge, sampling, case, target, candidate, or variant APIs.
-
-### Application configuration
-
-The package cannot safely guess which application config keys drive a production service. Configure those keys after the test application boots so named configurations change the same keys your production path reads:
+The plugin cannot guess which application config keys drive your production service. Declare them after the test application boots:
 
 ```php
 beforeEach(function (): void {
@@ -106,21 +97,25 @@ beforeEach(function (): void {
 });
 ```
 
-The `options` key is optional when candidates do not override provider options:
+The `options` key is optional when candidates do not override provider options. Production configurations can run without setup; requested overrides fail before the benchmark body if they cannot be applied truthfully.
+
+## Evaluation and Pest Evals
+
+The benchmark target returns a JSON-safe output. `evaluate()` is the reusable expectation boundary invoked with that output followed by the original dataset arguments.
+
+It can use ordinary Pest expectations or Pest Evals expectations:
 
 ```php
-benchmarks()->configure(
-    provider: 'receipt_ocr.provider',
-    model: 'receipt_ocr.model',
-    settings: ['receipt_ocr.prompt'],
-);
+->evaluate(function (string $output): void {
+    expect($output)->toPassScorer(new ReceiptAccuracyScorer);
+})
 ```
 
-Production configurations can run without setup. Model or application-setting overrides fail before the benchmark body when `benchmarks()->configure(...)` has not been called, preventing a requested model from being reported when it never affected execution.
+The same callback runs after a live target, during replay, and when resume reuses compatible output.
 
-### Laravel AI observations
+## Laravel AI observations
 
-Add the benchmark middleware to an eval-only subclass of your production Laravel AI agent. The production agent remains unchanged, while benchmark calls record the resolved request, provider response, token usage, latency, and failed fallback attempts:
+Add the middleware to an eval-only subclass of your production Laravel AI agent:
 
 ```php
 use App\Ai\Agents\ReceiptOcrAgent;
@@ -136,37 +131,117 @@ final class BenchmarkReceiptOcrAgent extends ReceiptOcrAgent implements HasMiddl
 }
 ```
 
-The middleware is inert outside an active `benchmark()` body. Real calls made through an instrumented agent are recorded as `live`; Laravel AI fake-gateway calls and uninstrumented benchmark bodies remain `simulated` and cannot be promoted as baselines. Runtime response metadata is authoritative for the effective provider and model, even when it differs from the requested configuration. Pricing is calculated from normalized usage through `jkudish/laravel-ai-pricing`; Laravel AI does not currently expose provider-reported OpenRouter cost.
+The middleware is inert outside an active benchmark body. Real calls are recorded as `live`; Laravel AI fake-gateway calls and uninstrumented benchmark bodies are `simulated` and cannot be promoted as baselines.
 
-Completed and failed scorer eval runs write a recursively sanitized, bounded `scorecard.json` and private, redacted `replay.private.json` beneath `storage/app/ai-evals/runs/`. Requested and effective model identities are recorded independently. Stable scorecards exclude scorer inputs, expected values, prompts, and outputs; private replay retains the output needed to rerun scorers.
+Laravel AI currently exposes provider/model identity and token usage but not authoritative monetary cost. The plugin therefore resolves cost from usage through `jkudish/laravel-ai-pricing`; it will prefer provider-reported cost when Laravel AI exposes that evidence publicly.
 
-## Current foundation
+## Runs and private evidence
 
-- Pest-native benchmark and configuration expansion
-- Explicit `--evals` safety gating and benchmark-name filtering
-- Scoped Laravel model and application configuration
-- Requested/effective model evidence
-- Live Laravel AI identity, latency, usage, failure, and fallback observations
-- Shared `jkudish/laravel-ai-pricing` integration
-- Versioned JSON Schema 2020-12 scorecards
-- Stable scorecard, execution, trial, and result identities
-- Deterministic pre-execution trial fingerprints with runtime measurement identity
-- Bounded opaque correlation context
-- Durable run bundles for successful and failed benchmark bodies
-- Private-output replay, compatible resume, baseline promotion, and explicit historical gates
-- Explicit rejection of unsupported parallel benchmark execution
+Completed and failed evals write a run beneath `storage/app/ai-evals/runs/`:
 
-This private release candidate uses the existing `dev-add-scorer-result-callbacks` fork branch for native Pest Evals scorer evidence. A stable release remains gated on that callback landing upstream and being available in a compatible Pest Evals release; the plugin does not duplicate Pest's scoring API.
+```text
+storage/app/ai-evals/runs/<run-id>/
+├── scorecard.json
+└── replay.private.json
+```
 
-## Development
+Stable scorecards are recursively sanitized and exclude prompts, outputs, expected values, and scorer inputs. Private replay data retains the output needed to rerun evaluation and must be protected as application data.
+
+Requested and effective model identities are recorded separately. Scorecards use the bundled [JSON Schema 2020-12 contract](resources/schema/scorecard.schema.json).
+
+## Replay and resume
+
+Replay evaluates compatible private saved output without entering application configuration scope or invoking the target/provider path:
 
 ```bash
-composer test
-composer analyse
-composer validate --strict
-composer audit
+./vendor/bin/pest --evals --benchmark-replay='20260809T120000Z-abc123'
 ```
+
+Resume reuses output only from compatible trials whose target and evaluation evidence passed. It invokes the target for missing, failed, incomplete, or incompatible trials:
+
+```bash
+./vendor/bin/pest --evals --benchmark-resume='20260809T120000Z-abc123'
+```
+
+Targets, evaluation callbacks, JSON-safe captures, cases, configurations, resolved production settings, declared dependencies, and package/schema identity are fingerprinted before execution. Declare delegated production code explicitly with `dependsOn([...])`; missing, unreadable, duplicated, or ambiguous dependencies fail closed.
+
+## Baselines and regression gates
+
+Promote a completed live run:
+
+```php
+benchmarks()->promote(
+    run: '20260809T120000Z-abc123',
+    baseline: 'production',
+);
+```
+
+Promotion copies strict metric and identity evidence while excluding private output, scorecard context, and scorer reasoning. Simulated and recorded measurements are rejected in version 0.1 because their complete ancestry cannot yet be proven.
+
+Declare gates on the benchmark:
+
+```php
+->failWhen([
+    'pass_rate_drop' => 0.05,
+    'median_latency_increase' => 0.20,
+    'average_cost_increase' => 0.15,
+])
+```
+
+Then select the historical baseline explicitly:
+
+```bash
+./vendor/bin/pest --evals --benchmark-baseline=production
+```
+
+Without `--benchmark-baseline`, results remain evidence-only. A failed or not-evaluable explicit gate returns a nonzero process exit.
+
+`reference('production')` can also identify same-run comparative evidence without turning it into a historical baseline.
+
+## Serial execution in version 0.1
+
+Benchmark evals deliberately run serially. Combining `--evals` with `--parallel` or `-p` fails before execution because partial worker scorecards cannot yet be aggregated truthfully.
+
+## Terminology
+
+- **Benchmark:** the named Pest test and its comparative declaration.
+- **Configuration:** one production, model, options, or application-setting candidate.
+- **Trial:** one case, configuration, and repetition.
+- **Result:** evaluation or scorer evidence attached to a trial.
+- **Run:** the durable bundle produced by one benchmark execution.
+- **Baseline:** sanitized live evidence promoted under a stable name.
+- **Replay:** reevaluation of compatible private saved output.
+- **Resume:** selective reuse of compatible passed output while completing missing work.
+
+## Requirements
+
+- PHP 8.4 or newer.
+- Laravel 13 for the standard Pest Laravel integration.
+- Pest 5.
+- Pest Evals 5 with the scorer-result callback proposed in [PR #4](https://github.com/pestphp/pest-plugin-evals/pull/4).
+
+The package keeps Illuminate 12-compatible contracts for custom bootstraps. Pest Laravel 5 currently requires Laravel 13.23 or newer, so the conventional Laravel 12 integration is outside the version 0.1 support matrix.
+
+## Stability
+
+The package follows Semantic Versioning. The public API and scorecard schema may evolve between minor releases before `1.0.0`; changes will be documented in the [changelog](CHANGELOG.md).
+
+## Roadmap
+
+See [roadmap.md](roadmap.md) for parallel aggregation, run and baseline commands, and the remaining version 0.1 publication gates.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+Please report vulnerabilities privately according to [SECURITY.md](SECURITY.md).
+
+## Sponsoring
+
+If this package helps your work, consider [sponsoring its development](https://github.com/sponsors/jkudish).
 
 ## License
 
-MIT. See [LICENSE.md](LICENSE.md).
+Pest AI Benchmarks is open-source software licensed under the [MIT license](LICENSE.md).

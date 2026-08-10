@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose an improvement to Pest AI Benchmarks
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What benchmarking or evidence problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the API, command, or behavior you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: pest-semantics
+    attributes:
+      label: Pest compatibility
+      description: How should this interact with Pest datasets, expectations, filtering, repetitions, or failures?
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and privacy considerations
+      description: Describe any replay, baseline, scorer, prompt, output, or provenance implications.
