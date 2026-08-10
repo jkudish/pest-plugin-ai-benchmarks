@@ -10,7 +10,15 @@ $cases = getenv('BENCHMARK_INCLUDE_SECOND') === '1'
     ? ['first-case', 'second-case']
     : ['first-case'];
 
-benchmark('replays and resumes declared evaluation callbacks', function (string $case): string {
+beforeEach(function (): void {
+    $model = getenv('BENCHMARK_PRODUCTION_MODEL');
+
+    if (is_string($model) && $model !== '') {
+        config()->set('benchmark.model', $model);
+    }
+});
+
+$lifecycleBenchmark = benchmark('replays and resumes declared evaluation callbacks', function (string $case): string {
     $targetCounter = getenv('BENCHMARK_TARGET_COUNTER');
 
     if (is_string($targetCounter) && $targetCounter !== '') {
@@ -26,6 +34,10 @@ benchmark('replays and resumes declared evaluation callbacks', function (string 
 
         if (is_string($evaluationCounter) && $evaluationCounter !== '') {
             file_put_contents($evaluationCounter, "evaluation\n", FILE_APPEND | LOCK_EX);
+        }
+
+        if (getenv('BENCHMARK_ORDINARY_FAILURE') === '1') {
+            expect($output)->toBe('forced ordinary expectation mismatch');
         }
 
         $scorer = new class implements Scorer
@@ -46,3 +58,11 @@ benchmark('replays and resumes declared evaluation callbacks', function (string 
             expected: "output:{$case}",
         );
     });
+
+$dependency = getenv('BENCHMARK_SOURCE_DEPENDENCY');
+
+if (is_string($dependency) && $dependency !== '') {
+    $lifecycleBenchmark->dependsOn([$dependency]);
+}
+
+unset($lifecycleBenchmark);

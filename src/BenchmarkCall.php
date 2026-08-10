@@ -29,9 +29,10 @@ final class BenchmarkCall
     public function __construct(
         private readonly TestCall $testCall,
         DeclarationContext $declarationContext,
+        string $description,
     ) {
         $this->testCall->group(self::BENCHMARK_GROUP);
-        DeclarationRegistry::register($this, $declarationContext);
+        DeclarationRegistry::register($this, $declarationContext, $description);
     }
 
     /**
@@ -104,6 +105,35 @@ final class BenchmarkCall
     public function evaluate(Closure $callback): self
     {
         DeclarationRegistry::setEvaluation($this, $callback);
+
+        return $this;
+    }
+
+    /** @param array<array-key, mixed> $dependencies */
+    public function dependsOn(array $dependencies): self
+    {
+        if ($dependencies === [] || ! array_is_list($dependencies)) {
+            throw new InvalidArgumentException('Benchmark source dependencies must be a non-empty list.');
+        }
+
+        $validated = [];
+
+        foreach ($dependencies as $dependency) {
+            if (! is_string($dependency)
+                || trim($dependency) === ''
+                || trim($dependency) !== $dependency
+                || preg_match('/[\x00-\x1F\x7F]/', $dependency) === 1) {
+                throw new InvalidArgumentException('Benchmark source dependencies must be non-empty class names or file paths without surrounding whitespace or control characters.');
+            }
+
+            if (in_array($dependency, $validated, true)) {
+                throw new InvalidArgumentException(sprintf('Benchmark source dependency [%s] is duplicated.', $dependency));
+            }
+
+            $validated[] = $dependency;
+        }
+
+        DeclarationRegistry::setDependencies($this, $validated);
 
         return $this;
     }

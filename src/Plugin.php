@@ -133,7 +133,21 @@ final class Plugin implements AddsOutput, Bootable, HandlesArguments, HandlesOri
 
     public function terminate(): void
     {
-        ExecutionRecorder::flush();
+        try {
+            ExecutionRecorder::flush();
+        } finally {
+            self::reset();
+        }
+    }
+
+    /** @internal */
+    public static function reset(): void
+    {
+        self::$evalMode = false;
+        self::$benchmarkFilter = null;
+        self::$replayRunId = null;
+        self::$resumeRunId = null;
+        self::$baselineName = null;
     }
 
     public function addOutput(int $exitCode): int

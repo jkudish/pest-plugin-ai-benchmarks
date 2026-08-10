@@ -8,6 +8,14 @@ use Jkudish\PestAiBenchmarks\Runs\BaselineStore;
 use Jkudish\PestAiBenchmarks\Runs\RunPaths;
 use Symfony\Component\Process\Process;
 
+beforeEach(function (): void {
+    Plugin::reset();
+});
+
+afterEach(function (): void {
+    Plugin::reset();
+});
+
 it('removes the benchmark selector before PHPUnit and scopes execution to benchmarks', function (array $arguments, array $expected): void {
     $plugin = new Plugin;
     $plugin->handleOriginalArguments($arguments);
@@ -278,4 +286,20 @@ it('does not enable eval mode when argument validation fails', function (): void
     expect(fn () => $plugin->handleOriginalArguments(['pest', '--evals', '--parallel']))
         ->toThrow(InvalidArgumentException::class, 'AI benchmarks do not support parallel execution')
         ->and(Plugin::isEvalMode())->toBeFalse();
+});
+
+it('fails closed when distinct benchmarks share a description', function (): void {
+    $root = dirname(__DIR__, 2);
+    $process = new Process([
+        PHP_BINARY,
+        $root.'/vendor/bin/pest',
+        __DIR__.'/Fixtures/DuplicateDescriptionBenchmark.php',
+        '--evals',
+        '--ci',
+    ], $root);
+    $process->run();
+
+    expect($process->isSuccessful())->toBeFalse()
+        ->and($process->getOutput().$process->getErrorOutput())
+        ->toContain('benchmark descriptions must be unique');
 });

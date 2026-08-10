@@ -39,6 +39,7 @@ use Jkudish\PestAiBenchmarks\Scorecards\Result;
 use Jkudish\PestAiBenchmarks\Scorecards\Scorecard;
 use Jkudish\PestAiBenchmarks\Scorecards\Trial;
 use Pest\TestSuite;
+use ReflectionClass;
 use ReflectionFunction;
 use RuntimeException;
 use Throwable;
@@ -73,7 +74,7 @@ final class ExecutionRecorder
         return 'case_'.substr(hash('sha256', self::encoded(self::stableCaseValue($arguments))), 0, 24);
     }
 
-    /** @return array{file: string, start_line: int, end_line: int, source_sha256: string} */
+    /** @return array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256: string} */
     public static function targetIdentity(Closure $target): array
     {
         $reflection = new ReflectionFunction($target);
@@ -94,18 +95,84 @@ final class ExecutionRecorder
         $root = rtrim(TestSuite::getInstance()->rootPath, '/\\').DIRECTORY_SEPARATOR;
         $normalizedFile = str_starts_with($file, $root) ? substr($file, strlen($root)) : $file;
         $source = implode('', array_slice($lines, $startLine - 1, $endLine - $startLine + 1));
+        $captures = $reflection->getStaticVariables();
+        ksort($captures);
 
         return [
             'file' => str_replace('\\', '/', $normalizedFile),
             'start_line' => $startLine,
             'end_line' => $endLine,
             'source_sha256' => hash('sha256', $source),
+            'captures_sha256' => hash('sha256', self::encoded(self::stableCaseValue($captures))),
         ];
     }
 
     /**
-     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string}  $targetIdentity
-     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string}|null  $evaluationIdentity
+     * @param  list<string>  $dependencies
+     * @return list<array{source: string, sha256: string}>
+     */
+    public static function dependencyIdentity(array $dependencies): array
+    {
+        $root = rtrim(TestSuite::getInstance()->rootPath, '/\\');
+        $identities = [];
+        $resolvedFiles = [];
+
+        foreach ($dependencies as $dependency) {
+            $candidate = null;
+
+            if (class_exists($dependency) || interface_exists($dependency) || trait_exists($dependency) || enum_exists($dependency)) {
+                $candidate = (new ReflectionClass($dependency))->getFileName();
+
+                if (! is_string($candidate)) {
+                    throw new RuntimeException(sprintf('Benchmark source dependency class [%s] has no readable source file.', $dependency));
+                }
+            } else {
+                $absolute = str_starts_with($dependency, '/')
+                    || preg_match('/^[A-Za-z]:[\\\\\/]/', $dependency) === 1
+                    || str_starts_with($dependency, '\\\\');
+                $candidate = $absolute ? $dependency : $root.DIRECTORY_SEPARATOR.$dependency;
+            }
+
+            $resolved = realpath($candidate);
+
+            if ($resolved === false || ! is_file($resolved) || ! is_readable($resolved)) {
+                throw new RuntimeException(sprintf('Benchmark source dependency [%s] must resolve to a readable file.', $dependency));
+            }
+
+            if (isset($resolvedFiles[$resolved])) {
+                throw new RuntimeException(sprintf(
+                    'Benchmark source dependencies [%s] and [%s] resolve to the same file.',
+                    $resolvedFiles[$resolved],
+                    $dependency,
+                ));
+            }
+
+            $contents = file_get_contents($resolved);
+
+            if ($contents === false) {
+                throw new RuntimeException(sprintf('Benchmark source dependency [%s] could not be read.', $dependency));
+            }
+
+            $resolvedFiles[$resolved] = $dependency;
+            $relative = str_starts_with($resolved, $root.DIRECTORY_SEPARATOR)
+                ? substr($resolved, strlen($root) + 1)
+                : $resolved;
+            $identities[] = [
+                'source' => str_replace('\\', '/', $relative),
+                'sha256' => hash('sha256', $contents),
+            ];
+        }
+
+        usort($identities, fn (array $left, array $right): int => $left['source'] <=> $right['source']);
+
+        return $identities;
+    }
+
+    /**
+     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256?: string}  $targetIdentity
+     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256?: string}|null  $evaluationIdentity
+     * @param  array<string, mixed>|null  $dependencyEvidence
+     * @param  list<array{source: string, sha256: string}>  $sourceDependencies
      */
     public static function trialFingerprint(
         string $benchmark,
@@ -114,6 +181,8 @@ final class ExecutionRecorder
         Configuration $configuration,
         array $targetIdentity,
         ?array $evaluationIdentity,
+        ?array $dependencyEvidence = null,
+        array $sourceDependencies = [],
     ): string {
         return 'sha256:'.hash('sha256', self::encoded([
             'benchmark' => $benchmark,
@@ -127,6 +196,10 @@ final class ExecutionRecorder
                 'options' => $configuration->options,
                 'settings' => $configuration->settings,
             ],
+            'dependencies' => [
+                'application' => $dependencyEvidence,
+                'sources' => $sourceDependencies,
+            ],
             'schema_version' => Scorecard::SCHEMA_VERSION,
             'package' => [
                 'name' => Scorecard::PACKAGE_NAME,
@@ -136,10 +209,10 @@ final class ExecutionRecorder
     }
 
     /**
-     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string}  $targetIdentity
+     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256?: string}  $targetIdentity
      * @param  list<AgentObservation>  $observations
      * @param  list<PestEvalObservation>  $scorerObservations
-     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string}|null  $evaluationIdentity
+     * @param  array{file: string, start_line: int, end_line: int, source_sha256: string, captures_sha256?: string}|null  $evaluationIdentity
      */
     public static function record(
         string $benchmark,
@@ -254,6 +327,7 @@ final class ExecutionRecorder
         array $sourceTrial,
         array $scorerObservations,
         BenchmarkDeclaration $declaration,
+        bool $passed,
     ): void {
         $results = $sourceTrial['results'] ?? null;
 
@@ -271,7 +345,7 @@ final class ExecutionRecorder
             fingerprint: $fingerprint,
             identity: new ModelIdentityEvidence(null, null, null, null),
             latencyMs: 0.0,
-            passed: true,
+            passed: $passed,
             output: self::jsonSafe($output),
             scorerObservations: $scorerObservations,
             sourceMeasurements: self::stableRecords($results[0]['measurements'], 'Replay trial contains invalid target measurements.'),
@@ -575,7 +649,10 @@ final class ExecutionRecorder
                 throw new RuntimeException('Saved trial contains invalid measurement evidence.');
             }
 
-            $mode = $recorded ? ExecutionMode::Recorded : ExecutionMode::from($measurement['mode']);
+            $sourceMode = ExecutionMode::from($measurement['mode']);
+            $mode = $recorded && $sourceMode !== ExecutionMode::Simulated
+                ? ExecutionMode::Recorded
+                : $sourceMode;
             $fingerprint = $recorded
                 ? 'sha256:'.hash('sha256', self::encoded([
                     'trial' => $trialFingerprint,

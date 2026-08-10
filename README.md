@@ -38,6 +38,10 @@ benchmark('extracts receipts', function (array $case): array {
         expect($output['merchant_name'])->toBe($case['expected']['merchant_name'])
             ->and($output['total_amount'])->toBe($case['expected']['total_amount']);
     })
+    ->dependsOn([
+        ReceiptOcrService::class,
+        'config/receipt-ocr.php',
+    ])
     ->repeat(3);
 ```
 
@@ -58,15 +62,15 @@ Every completed eval writes a run ID in `storage/app/ai-evals/runs/`. Replay rer
 ./vendor/bin/pest --evals --benchmark-replay='20260809T120000Z-abc123'
 ```
 
-Resume reuses compatible completed trials and invokes the target plus `evaluate()` only for trials missing from the saved run:
+Resume reuses target output only from compatible trials whose primary and evaluation evidence passed. It always reruns `evaluate()` against reused output, and invokes the target again for missing, failed, or incomplete saved trials:
 
 ```bash
 ./vendor/bin/pest --evals --benchmark-resume='20260809T120000Z-abc123'
 ```
 
-Target and `evaluate()` source identities, cases, configurations, and package/schema identity are fingerprinted before execution. Replay and resume fail closed if a matching saved trial has a different fingerprint. Runtime provider/model identity remains in measurement fingerprints.
+Target and `evaluate()` source identities, JSON-safe closure captures, cases, declared configurations, resolved production application dependencies, and package/schema identity are fingerprinted before execution. Delegated production code is intentionally not discovered through a broad workspace scan: list every class or file used behind the target with `dependsOn([...])` so its source-content hash participates in safe replay and resume. Missing, unreadable, duplicated, or ambiguous dependencies fail closed. Replay and resume fail closed before target execution if a matching saved trial has a different fingerprint. Non-JSON-safe closure captures are rejected. Runtime provider/model identity remains in measurement fingerprints.
 
-Promote a completed run through the public API. Promotion copies only the stable scorecard and rejects any run containing simulated measurements:
+Promote a completed run through the public API. Promotion copies only strict metric and identity evidence, removes scorecard context and scorer reasoning, and accepts only directly observed `live` measurements. Simulated and `recorded` measurements are rejected because the unchanged v0.1 schema cannot prove their full ancestry:
 
 ```php
 benchmarks()->promote(

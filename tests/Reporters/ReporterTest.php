@@ -149,3 +149,30 @@ it('binds deterministic trial identity to the reusable evaluation callback', fun
     expect($first)->toStartWith('sha256:')
         ->not->toBe($second);
 });
+
+it('fingerprints JSON-safe closure captures independently of source', function (): void {
+    $closure = fn (string $captured): Closure => fn (): string => $captured;
+    $first = ExecutionRecorder::targetIdentity($closure('first'));
+    $second = ExecutionRecorder::targetIdentity($closure('second'));
+
+    expect($first['source_sha256'])->toBe($second['source_sha256'])
+        ->and($first['captures_sha256'])->not->toBe($second['captures_sha256']);
+});
+
+it('fingerprints explicit class and file dependencies and rejects ambiguous resolution', function (): void {
+    $dependency = tempnam(sys_get_temp_dir(), 'pest-ai-source-');
+
+    expect($dependency)->toBeString();
+
+    file_put_contents($dependency, "first version\n");
+    $first = ExecutionRecorder::dependencyIdentity([Configuration::class, $dependency]);
+    file_put_contents($dependency, "second version\n");
+    $second = ExecutionRecorder::dependencyIdentity([Configuration::class, $dependency]);
+
+    expect($first)->toHaveCount(2)
+        ->not->toBe($second)
+        ->and(fn () => ExecutionRecorder::dependencyIdentity(['missing-dependency.php']))
+        ->toThrow(RuntimeException::class, 'must resolve to a readable file')
+        ->and(fn () => ExecutionRecorder::dependencyIdentity([Configuration::class, 'src/Configuration.php']))
+        ->toThrow(RuntimeException::class, 'resolve to the same file');
+});

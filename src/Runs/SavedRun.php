@@ -26,6 +26,7 @@ final readonly class SavedRun
         string $configuration,
         int $repeat,
         string $fingerprint,
+        bool $requirePassed = false,
     ): ?array {
         if (trim($benchmark) === '' || trim($caseId) === '' || trim($configuration) === '' || $repeat < 1 || trim($fingerprint) === '') {
             throw new RuntimeException('Saved trial identity must include a benchmark, case, configuration, repeat, and fingerprint.');
@@ -68,10 +69,40 @@ final readonly class SavedRun
             throw new RuntimeException('Completed trial fingerprint does not match the requested execution.');
         }
 
+        if ($requirePassed && ! $this->passed($matched)) {
+            return null;
+        }
+
         return [
             'trial' => $matched,
             'output' => $this->replayOutput($matched['trial_id'] ?? null, $fingerprint),
         ];
+    }
+
+    /** @param array<string, mixed> $trial */
+    private function passed(array $trial): bool
+    {
+        $results = $trial['results'] ?? null;
+
+        if (! is_array($results) || $results === []) {
+            return false;
+        }
+
+        $primaryPassed = false;
+
+        foreach ($results as $result) {
+            if (! is_array($result)
+                || ! is_string($result['scorer'] ?? null)
+                || ($result['passed'] ?? null) !== true) {
+                return false;
+            }
+
+            if ($result['scorer'] === 'pest:test') {
+                $primaryPassed = true;
+            }
+        }
+
+        return $primaryPassed;
     }
 
     /**

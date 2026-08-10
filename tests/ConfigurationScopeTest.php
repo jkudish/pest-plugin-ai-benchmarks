@@ -34,6 +34,19 @@ function configurationScope(Repository $repository): ConfigurationScope
     );
 }
 
+it('fingerprints JSON-safe production options without requiring an override array', function (mixed $options): void {
+    $repository = configurationRepository();
+    $repository->set('ai.options', $options);
+
+    $fingerprint = configurationScope($repository)->fingerprint(Configuration::production());
+
+    expect($fingerprint['ai.options'])->toBe($options);
+})->with([
+    'null provider default' => null,
+    'scalar provider default' => 'provider-managed',
+    'numeric provider default' => 42,
+]);
+
 it('configures application keys through the global benchmark API', function (): void {
     config()->set([
         'api.provider' => 'openrouter',

@@ -46,6 +46,20 @@ function lifecycleCounter(string $path): int
     return is_string($contents) ? count(array_filter(explode("\n", $contents))) : 0;
 }
 
+function lifecyclePrimaryPassed(string $scorecard): ?bool
+{
+    $data = json_decode((string) file_get_contents($scorecard), true, flags: JSON_THROW_ON_ERROR);
+    $results = $data['trials'][0]['results'] ?? [];
+
+    foreach ($results as $result) {
+        if (is_array($result) && ($result['scorer'] ?? null) === 'pest:test') {
+            return is_bool($result['passed'] ?? null) ? $result['passed'] : null;
+        }
+    }
+
+    return null;
+}
+
 it('replays private output through evaluate without invoking the target', function (): void {
     $targetCounter = tempnam(sys_get_temp_dir(), 'pest-ai-target-');
     $evaluationCounter = tempnam(sys_get_temp_dir(), 'pest-ai-evaluate-');
@@ -78,7 +92,53 @@ it('replays private output through evaluate without invoking the target', functi
         ->and(lifecycleCounter($targetCounter))->toBe(0)
         ->and(lifecycleCounter($evaluationCounter))->toBe(2)
         ->and($scorecard['trials'])->toHaveCount(2)
-        ->and($scorecard['trials'][0]['results'][0]['measurements'][0]['mode'])->toBe('recorded');
+        ->and($scorecard['trials'][0]['results'][0]['measurements'][0]['mode'])->toBe('simulated')
+        ->and(fn () => benchmarks()->promote($replay['run_id'], 'replayed-simulated-'.bin2hex(random_bytes(8))))
+        ->toThrow(RuntimeException::class, 'Simulated evidence cannot be promoted');
+});
+
+it('records ordinary evaluate expectation failures truthfully in live and replay evidence', function (): void {
+    $targetCounter = tempnam(sys_get_temp_dir(), 'pest-ai-target-');
+
+    expect($targetCounter)->toBeString();
+
+    $environment = [
+        'BENCHMARK_INCLUDE_SECOND' => '0',
+        'BENCHMARK_TARGET_COUNTER' => $targetCounter,
+        'BENCHMARK_ORDINARY_FAILURE' => '0',
+    ];
+    $source = runLifecycleFixture('LifecycleExecutionBenchmark.php', environment: $environment);
+
+    expect($source['process']->isSuccessful())->toBeTrue()
+        ->and(lifecyclePrimaryPassed($source['scorecard']))->toBeTrue();
+
+    file_put_contents($targetCounter, '');
+    $environment['BENCHMARK_ORDINARY_FAILURE'] = '1';
+    $replay = runLifecycleFixture(
+        'LifecycleExecutionBenchmark.php',
+        ["--benchmark-replay={$source['run_id']}"],
+        $environment,
+    );
+
+    expect($replay['process']->isSuccessful())->toBeFalse()
+        ->and(lifecycleCounter($targetCounter))->toBe(0)
+        ->and(lifecyclePrimaryPassed($replay['scorecard']))->toBeFalse();
+
+    $resume = runLifecycleFixture(
+        'LifecycleExecutionBenchmark.php',
+        ["--benchmark-resume={$source['run_id']}"],
+        $environment,
+    );
+
+    expect($resume['process']->isSuccessful())->toBeFalse()
+        ->and(lifecycleCounter($targetCounter))->toBe(0)
+        ->and(lifecyclePrimaryPassed($resume['scorecard']))->toBeFalse();
+
+    $live = runLifecycleFixture('LifecycleExecutionBenchmark.php', environment: $environment);
+
+    expect($live['process']->isSuccessful())->toBeFalse()
+        ->and(lifecycleCounter($targetCounter))->toBe(1)
+        ->and(lifecyclePrimaryPassed($live['scorecard']))->toBeFalse();
 });
 
 it('resumes only trials missing from a compatible saved run', function (): void {
@@ -110,8 +170,108 @@ it('resumes only trials missing from a compatible saved run', function (): void 
 
     expect($resumed['process']->isSuccessful())->toBeTrue()
         ->and(lifecycleCounter($targetCounter))->toBe(1)
-        ->and(lifecycleCounter($evaluationCounter))->toBe(1)
+        ->and(lifecycleCounter($evaluationCounter))->toBe(2)
         ->and($scorecard['trials'])->toHaveCount(2);
+});
+
+it('fails closed before resume when resolved production configuration changes', function (): void {
+    $root = dirname(__DIR__, 2);
+    $targetCounter = tempnam(sys_get_temp_dir(), 'pest-ai-target-');
+
+    expect($targetCounter)->toBeString();
+
+    $environment = [
+        'BENCHMARK_INCLUDE_SECOND' => '0',
+        'BENCHMARK_TARGET_COUNTER' => $targetCounter,
+        'BENCHMARK_PRODUCTION_MODEL' => 'production/model-a',
+    ];
+    $source = runLifecycleFixture('LifecycleExecutionBenchmark.php', environment: $environment);
+
+    expect($source['process']->isSuccessful())->toBeTrue();
+
+    file_put_contents($targetCounter, '');
+    $environment['BENCHMARK_PRODUCTION_MODEL'] = 'production/model-b';
+    $process = new Process([
+        PHP_BINARY,
+        $root.'/vendor/bin/pest',
+        __DIR__.'/Fixtures/LifecycleExecutionBenchmark.php',
+        '--evals',
+        '--ci',
+        "--benchmark-resume={$source['run_id']}",
+    ], $root, $environment);
+    $process->run();
+
+    expect($process->isSuccessful())->toBeFalse()
+        ->and(lifecycleCounter($targetCounter))->toBe(0)
+        ->and($process->getOutput().$process->getErrorOutput())->toContain('fingerprint');
+});
+
+it('fails closed before resume when an explicit source dependency changes', function (): void {
+    $root = dirname(__DIR__, 2);
+    $targetCounter = tempnam(sys_get_temp_dir(), 'pest-ai-target-');
+    $dependency = tempnam(sys_get_temp_dir(), 'pest-ai-dependency-');
+
+    expect($targetCounter)->toBeString()
+        ->and($dependency)->toBeString();
+
+    file_put_contents($dependency, "version one\n");
+    $environment = [
+        'BENCHMARK_INCLUDE_SECOND' => '0',
+        'BENCHMARK_TARGET_COUNTER' => $targetCounter,
+        'BENCHMARK_SOURCE_DEPENDENCY' => $dependency,
+    ];
+    $source = runLifecycleFixture('LifecycleExecutionBenchmark.php', environment: $environment);
+
+    expect($source['process']->isSuccessful())->toBeTrue();
+
+    file_put_contents($targetCounter, '');
+    file_put_contents($dependency, "version two\n");
+    $process = new Process([
+        PHP_BINARY,
+        $root.'/vendor/bin/pest',
+        __DIR__.'/Fixtures/LifecycleExecutionBenchmark.php',
+        '--evals',
+        '--ci',
+        "--benchmark-resume={$source['run_id']}",
+    ], $root, $environment);
+    $process->run();
+
+    expect($process->isSuccessful())->toBeFalse()
+        ->and(lifecycleCounter($targetCounter))->toBe(0)
+        ->and($process->getOutput().$process->getErrorOutput())->toContain('fingerprint');
+});
+
+it('reruns a failed saved trial instead of reusing it as passing evidence', function (): void {
+    $targetCounter = tempnam(sys_get_temp_dir(), 'pest-ai-target-');
+    $evaluationCounter = tempnam(sys_get_temp_dir(), 'pest-ai-evaluate-');
+
+    expect($targetCounter)->toBeString()
+        ->and($evaluationCounter)->toBeString();
+
+    $environment = [
+        'BENCHMARK_INCLUDE_SECOND' => '0',
+        'BENCHMARK_TARGET_COUNTER' => $targetCounter,
+        'BENCHMARK_EVALUATION_COUNTER' => $evaluationCounter,
+        'BENCHMARK_ORDINARY_FAILURE' => '1',
+    ];
+    $failed = runLifecycleFixture('LifecycleExecutionBenchmark.php', environment: $environment);
+
+    expect($failed['process']->isSuccessful())->toBeFalse()
+        ->and(lifecyclePrimaryPassed($failed['scorecard']))->toBeFalse();
+
+    file_put_contents($targetCounter, '');
+    file_put_contents($evaluationCounter, '');
+    $environment['BENCHMARK_ORDINARY_FAILURE'] = '0';
+    $resumed = runLifecycleFixture(
+        'LifecycleExecutionBenchmark.php',
+        ["--benchmark-resume={$failed['run_id']}"],
+        $environment,
+    );
+
+    expect($resumed['process']->isSuccessful())->toBeTrue()
+        ->and(lifecycleCounter($targetCounter))->toBe(1)
+        ->and(lifecycleCounter($evaluationCounter))->toBe(1)
+        ->and(lifecyclePrimaryPassed($resumed['scorecard']))->toBeTrue();
 });
 
 it('rejects simulated saved runs through the public promotion API', function (): void {

@@ -15,25 +15,24 @@ final readonly class BaselineStore
 
     public function save(string $name, Scorecard $scorecard): void
     {
-        $stableScorecard = $scorecard->toArray();
-        $this->write($name, $stableScorecard, $scorecard->toJson());
+        $this->write($name, $scorecard->toArray());
     }
 
     public function promote(RunId $runId, string $name): void
     {
         $stableScorecard = (new SavedRun($this->paths, $runId))->scorecard();
-        $json = json_encode(
-            $stableScorecard,
-            JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
-        )."\n";
-
-        $this->write($name, $stableScorecard, $json);
+        $this->write($name, $stableScorecard);
     }
 
     /** @param array<string, mixed> $stableScorecard */
-    private function write(string $name, array $stableScorecard, string $json): void
+    private function write(string $name, array $stableScorecard): void
     {
-        $this->assertPromotable($stableScorecard);
+        $baseline = $this->baselineEvidence($stableScorecard);
+        $this->assertPromotable($baseline);
+        $json = json_encode(
+            $baseline,
+            JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        )."\n";
 
         $path = $this->paths->baseline($name);
 
@@ -58,6 +57,42 @@ final readonly class BaselineStore
 
             throw new RuntimeException("Unable to save baseline [{$name}] atomically.");
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $scorecard
+     * @return array<string, mixed>
+     */
+    private function baselineEvidence(array $scorecard): array
+    {
+        unset($scorecard['context']);
+        $trials = $scorecard['trials'] ?? null;
+
+        if (! is_array($trials)) {
+            return $scorecard;
+        }
+
+        foreach ($trials as $trialIndex => $trial) {
+            if (! is_array($trial) || ! is_array($trial['results'] ?? null)) {
+                continue;
+            }
+
+            $results = $trial['results'];
+
+            foreach ($results as $resultIndex => $result) {
+                if (is_array($result)) {
+                    $result['reasoning'] = null;
+                    $results[$resultIndex] = $result;
+                }
+            }
+
+            $trial['results'] = $results;
+            $trials[$trialIndex] = $trial;
+        }
+
+        $scorecard['trials'] = $trials;
+
+        return $scorecard;
     }
 
     /** @throws JsonException */
@@ -131,6 +166,10 @@ final readonly class BaselineStore
 
                     if ($measurement['mode'] === 'simulated') {
                         throw new RuntimeException('Simulated evidence cannot be promoted as a baseline.');
+                    }
+
+                    if ($measurement['mode'] !== 'live') {
+                        throw new RuntimeException('Only directly observed live evidence can be promoted as a baseline.');
                     }
                 }
             }

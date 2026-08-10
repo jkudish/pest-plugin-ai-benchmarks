@@ -32,6 +32,7 @@ final readonly class ResumeReader
             $configuration,
             $repeat,
             $fingerprint,
+            requirePassed: true,
         );
 
         if ($completed === null) {

@@ -11,6 +11,7 @@ use Jkudish\PestAiBenchmarks\Configuration;
 use Jkudish\PestAiBenchmarks\Results\OpaqueContext;
 use LogicException;
 use WeakMap;
+use WeakReference;
 
 /** @internal */
 final class DeclarationRegistry
@@ -24,10 +25,23 @@ final class DeclarationRegistry
     /** @var list<DeclarationContext> */
     private static array $active = [];
 
-    public static function register(BenchmarkCall $call, DeclarationContext $context): void
+    /** @var array<string, WeakReference<DeclarationContext>> */
+    private static array $descriptions = [];
+
+    public static function register(BenchmarkCall $call, DeclarationContext $context, string $description): void
     {
+        $registered = self::$descriptions[$description] ?? null;
+
+        if ($registered instanceof WeakReference && $registered->get() !== null && $registered->get() !== $context) {
+            throw new InvalidArgumentException(sprintf(
+                'Benchmark description [%s] is already registered; benchmark descriptions must be unique.',
+                $description,
+            ));
+        }
+
         self::declarations()[$context] = new BenchmarkDeclaration;
         self::contexts()[$call] = $context;
+        self::$descriptions[$description] = WeakReference::create($context);
     }
 
     /** @param array<string, Configuration> $configurations */
@@ -83,6 +97,18 @@ final class DeclarationRegistry
         }
 
         self::declarations()[self::context($call)] = $declaration->withEvaluation($evaluation);
+    }
+
+    /** @param list<string> $dependencies */
+    public static function setDependencies(BenchmarkCall $call, array $dependencies): void
+    {
+        $declaration = self::get($call);
+
+        if ($declaration->dependencies !== []) {
+            throw new InvalidArgumentException('Benchmark source dependencies may only be declared once.');
+        }
+
+        self::declarations()[self::context($call)] = $declaration->withDependencies($dependencies);
     }
 
     public static function setRepetitions(BenchmarkCall $call, int $repetitions): void
