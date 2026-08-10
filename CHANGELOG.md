@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-08-09
-
 ### Added
 
 - Pest-native `benchmark()` declarations with datasets, repetitions, filtering, groups, and dependencies.
@@ -23,5 +21,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pass-rate, median-latency, and average-cost comparison policies.
 - Explicit rejection of unsupported parallel benchmark execution.
 
-[Unreleased]: https://github.com/jkudish/pest-plugin-ai-benchmarks/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/jkudish/pest-plugin-ai-benchmarks/releases/tag/v0.1.0
+[Unreleased]: https://github.com/jkudish/pest-plugin-ai-benchmarks/commits/main

@@ -8,7 +8,7 @@ Security fixes are provided for the latest tagged release. Before `1.0.0`, fixes
 
 Please do not open a public issue for a suspected vulnerability.
 
-Report vulnerabilities through [GitHub private vulnerability reporting](https://github.com/jkudish/pest-plugin-ai-benchmarks/security/advisories/new) or email [joey@jkudish.com](mailto:joey@jkudish.com). Include the affected version, impact, reproduction steps, and any suggested mitigation.
+Until GitHub private vulnerability reporting is enabled for the public repository, email reports to [joey@jkudish.com](mailto:joey@jkudish.com). Include the affected version, impact, reproduction steps, and any suggested mitigation.
 
 You can expect an acknowledgement within five business days. Confirmed issues will be coordinated privately until a fix and disclosure plan are ready.
 

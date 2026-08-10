@@ -7,9 +7,6 @@
 <p align="center">
   <a href="https://github.com/jkudish/pest-plugin-ai-benchmarks/actions/workflows/run-tests.yml"><img src="https://github.com/jkudish/pest-plugin-ai-benchmarks/actions/workflows/run-tests.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/jkudish/pest-plugin-ai-benchmarks/actions/workflows/quality.yml"><img src="https://github.com/jkudish/pest-plugin-ai-benchmarks/actions/workflows/quality.yml/badge.svg" alt="Quality"></a>
-  <a href="https://packagist.org/packages/jkudish/pest-plugin-ai-benchmarks"><img src="https://img.shields.io/packagist/v/jkudish/pest-plugin-ai-benchmarks" alt="Packagist version"></a>
-  <a href="https://packagist.org/packages/jkudish/pest-plugin-ai-benchmarks"><img src="https://img.shields.io/packagist/dt/jkudish/pest-plugin-ai-benchmarks" alt="Packagist downloads"></a>
-  <img src="https://img.shields.io/packagist/php-v/jkudish/pest-plugin-ai-benchmarks" alt="PHP version">
   <a href="LICENSE.md"><img src="https://img.shields.io/github/license/jkudish/pest-plugin-ai-benchmarks" alt="License"></a>
 </p>
 
