@@ -16,6 +16,23 @@ final readonly class BaselineStore
     public function save(string $name, Scorecard $scorecard): void
     {
         $stableScorecard = $scorecard->toArray();
+        $this->write($name, $stableScorecard, $scorecard->toJson());
+    }
+
+    public function promote(RunId $runId, string $name): void
+    {
+        $stableScorecard = (new SavedRun($this->paths, $runId))->scorecard();
+        $json = json_encode(
+            $stableScorecard,
+            JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        )."\n";
+
+        $this->write($name, $stableScorecard, $json);
+    }
+
+    /** @param array<string, mixed> $stableScorecard */
+    private function write(string $name, array $stableScorecard, string $json): void
+    {
         $this->assertPromotable($stableScorecard);
 
         $path = $this->paths->baseline($name);
@@ -32,7 +49,7 @@ final readonly class BaselineStore
 
         $temporary = $path.'.'.bin2hex(random_bytes(8)).'.tmp';
 
-        if (file_put_contents($temporary, $scorecard->toJson(), LOCK_EX) === false
+        if (file_put_contents($temporary, $json, LOCK_EX) === false
             || ! chmod($temporary, 0644)
             || ! rename($temporary, $path)) {
             if (is_file($temporary)) {

@@ -18,12 +18,10 @@ The package keeps Illuminate 12-compatible contracts so applications with a cust
 ```php
 use Jkudish\PestAiBenchmarks\Configuration;
 
-benchmark('extracts receipts', function (array $case): void {
+benchmark('extracts receipts', function (array $case): array {
     $result = app(ReceiptOcrService::class)->extract($case['file']);
 
-    expect($result)
-        ->merchant_name->toBe($case['expected']['merchant_name'])
-        ->total_amount->toBe($case['expected']['total_amount']);
+    return $result->toArray();
 })
     ->with('receipt corpus')
     ->configurations([
@@ -36,6 +34,10 @@ benchmark('extracts receipts', function (array $case): void {
             'receipt_ocr.prompt' => 'receipt-ocr-v2',
         ]),
     ])
+    ->evaluate(function (array $output, array $case): void {
+        expect($output['merchant_name'])->toBe($case['expected']['merchant_name'])
+            ->and($output['total_amount'])->toBe($case['expected']['total_amount']);
+    })
     ->repeat(3);
 ```
 
@@ -45,6 +47,41 @@ Benchmarks are skipped during ordinary Pest runs before their test bodies execut
 ./vendor/bin/pest --evals
 ./vendor/bin/pest --evals --benchmark='extracts receipts'
 ```
+
+The target callback returns a JSON-safe output. `evaluate()` is the reusable expectation boundary: it receives that output followed by the original dataset arguments, and may use ordinary Pest expectations or Pest Evals expectations such as `toPassScorer()`. It is not a competing scorer API. The same callback runs after a live target and when a private saved output is replayed.
+
+### Replay, resume, and historical gates
+
+Every completed eval writes a run ID in `storage/app/ai-evals/runs/`. Replay reruns `evaluate()` against private saved outputs without entering application configuration scope or invoking the target/provider path:
+
+```bash
+./vendor/bin/pest --evals --benchmark-replay='20260809T120000Z-abc123'
+```
+
+Resume reuses compatible completed trials and invokes the target plus `evaluate()` only for trials missing from the saved run:
+
+```bash
+./vendor/bin/pest --evals --benchmark-resume='20260809T120000Z-abc123'
+```
+
+Target and `evaluate()` source identities, cases, configurations, and package/schema identity are fingerprinted before execution. Replay and resume fail closed if a matching saved trial has a different fingerprint. Runtime provider/model identity remains in measurement fingerprints.
+
+Promote a completed run through the public API. Promotion copies only the stable scorecard and rejects any run containing simulated measurements:
+
+```php
+benchmarks()->promote(
+    run: '20260809T120000Z-abc123',
+    baseline: 'production',
+);
+```
+
+Select that baseline for a historical comparison:
+
+```bash
+./vendor/bin/pest --evals --benchmark-baseline=production
+```
+
+`reference('production')` identifies same-run comparative evidence. `failWhen()` gates are enforced only when `--benchmark-baseline` explicitly selects a compatible historical scorecard; without that flag, results remain evidence-only. A failed or not-evaluable explicit gate returns a nonzero process exit.
 
 Benchmark eval runs are deliberately serial in version 0.1. Combining `--evals` with `--parallel` or `-p` fails before execution because partial worker scorecards cannot be truthfully aggregated yet.
 
@@ -109,11 +146,13 @@ Completed and failed scorer eval runs write a recursively sanitized, bounded `sc
 - Shared `jkudish/laravel-ai-pricing` integration
 - Versioned JSON Schema 2020-12 scorecards
 - Stable scorecard, execution, trial, and result identities
+- Deterministic pre-execution trial fingerprints with runtime measurement identity
 - Bounded opaque correlation context
 - Durable run bundles for successful and failed benchmark bodies
+- Private-output replay, compatible resume, baseline promotion, and explicit historical gates
 - Explicit rejection of unsupported parallel benchmark execution
 
-Replay, resume, baseline, and regression primitives are present but are not yet wired to their final CLI lifecycle. This private release candidate uses the existing `dev-add-scorer-result-callbacks` fork branch for native Pest Evals scorer evidence. A stable release remains gated on that callback landing upstream and being available in a compatible Pest Evals release; the plugin does not duplicate Pest's scoring API.
+This private release candidate uses the existing `dev-add-scorer-result-callbacks` fork branch for native Pest Evals scorer evidence. A stable release remains gated on that callback landing upstream and being available in a compatible Pest Evals release; the plugin does not duplicate Pest's scoring API.
 
 ## Development
 

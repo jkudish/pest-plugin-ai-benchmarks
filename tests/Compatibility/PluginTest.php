@@ -24,6 +24,35 @@ it('removes the benchmark selector before PHPUnit and scopes execution to benchm
     ],
 ]);
 
+it('removes benchmark lifecycle options before PHPUnit', function (): void {
+    $arguments = [
+        'pest',
+        '--evals',
+        '--benchmark-replay=run-one',
+        '--benchmark-baseline',
+        'production',
+    ];
+    $plugin = new Plugin;
+    $plugin->handleOriginalArguments($arguments);
+
+    expect($plugin->handleArguments($arguments))->toBe(['pest', '--evals'])
+        ->and(Plugin::replayRunId()?->value)->toBe('run-one')
+        ->and(Plugin::baselineName())->toBe('production');
+});
+
+it('validates benchmark lifecycle options before enabling them', function (): void {
+    expect(fn () => (new Plugin)->handleOriginalArguments(['pest', '--benchmark-replay=run-one']))
+        ->toThrow(InvalidArgumentException::class, 'require explicit [--evals] mode')
+        ->and(fn () => (new Plugin)->handleOriginalArguments([
+            'pest',
+            '--evals',
+            '--benchmark-replay=run-one',
+            '--benchmark-resume=run-one',
+        ]))->toThrow(InvalidArgumentException::class, 'mutually exclusive')
+        ->and(fn () => (new Plugin)->handleOriginalArguments(['pest', '--evals', '--benchmark-baseline=../unsafe']))
+        ->toThrow(InvalidArgumentException::class, 'Run IDs must be safe');
+});
+
 it('rejects an invalid benchmark selector', function (array $arguments, string $message): void {
     expect(fn () => (new Plugin)->handleOriginalArguments($arguments))
         ->toThrow(InvalidArgumentException::class, $message);

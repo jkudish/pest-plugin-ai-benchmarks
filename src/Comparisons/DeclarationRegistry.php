@@ -74,6 +74,17 @@ final class DeclarationRegistry
         self::declarations()[self::context($call)] = $declaration->withRegressionPolicy($regressionPolicy);
     }
 
+    public static function setEvaluation(BenchmarkCall $call, Closure $evaluation): void
+    {
+        $declaration = self::get($call);
+
+        if ($declaration->evaluation instanceof Closure) {
+            throw new InvalidArgumentException('A benchmark evaluation callback may only be declared once.');
+        }
+
+        self::declarations()[self::context($call)] = $declaration->withEvaluation($evaluation);
+    }
+
     public static function setRepetitions(BenchmarkCall $call, int $repetitions): void
     {
         self::declarations()[self::context($call)] = self::get($call)->withRepetitions($repetitions);

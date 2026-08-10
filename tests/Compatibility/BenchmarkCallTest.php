@@ -63,6 +63,9 @@ $lockedApiBenchmark = benchmark('stores locked declaration metadata', function (
     ])
     ->context(['work_reference' => 'TASK-123', 'trace_id' => 'trace-456'])
     ->reference('production')
+    ->evaluate(function (mixed $output): void {
+        expect($output)->toBeNull();
+    })
     ->failWhen([
         'pass_rate_drop' => 0.03,
         'median_latency_increase' => 0.20,
@@ -74,6 +77,7 @@ it('stores immutable metadata for the locked public API', function () use ($lock
 
     expect($declaration->configurations)->toBe(['production', 'candidate'])
         ->and($declaration->reference)->toBe('production')
+        ->and($declaration->evaluation)->toBeInstanceOf(Closure::class)
         ->and($declaration->context?->toArray())->toBe([
             'work_reference' => 'TASK-123',
             'trace_id' => 'trace-456',
@@ -108,7 +112,9 @@ it('rejects duplicate locked metadata declarations', function () use ($lockedApi
         ->and(fn () => $lockedApiBenchmark->reference('candidate'))
         ->toThrow(InvalidArgumentException::class, 'A benchmark reference may only be declared once.')
         ->and(fn () => $lockedApiBenchmark->failWhen(['pass_rate_drop' => 0.1]))
-        ->toThrow(InvalidArgumentException::class, 'Benchmark regression gates may only be declared once.');
+        ->toThrow(InvalidArgumentException::class, 'Benchmark regression gates may only be declared once.')
+        ->and(fn () => $lockedApiBenchmark->evaluate(fn (): null => null))
+        ->toThrow(InvalidArgumentException::class, 'A benchmark evaluation callback may only be declared once.');
 });
 
 $lifecycleBenchmark = benchmark('retains declaration metadata for native Pest execution', function (): void {

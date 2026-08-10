@@ -97,6 +97,18 @@ final class BenchmarkCall
     }
 
     /**
+     * Declare the reusable expectation boundary invoked with target output.
+     *
+     * @param  Closure(mixed, mixed...): mixed  $callback
+     */
+    public function evaluate(Closure $callback): self
+    {
+        DeclarationRegistry::setEvaluation($this, $callback);
+
+        return $this;
+    }
+
+    /**
      * @param  Closure|iterable<array-key, mixed>|string  ...$data
      */
     public function with(Closure|iterable|string ...$data): self
