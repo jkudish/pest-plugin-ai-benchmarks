@@ -2,17 +2,33 @@
     "name": "jkudish/pest-plugin-ai-benchmarks",
     "description": "A Pest plugin for comparative AI benchmarks, durable evidence, replay, and baselines.",
     "keywords": [
-        "Jkudish",
+        "ai",
+        "benchmarks",
+        "evals",
         "laravel",
-        "pest-plugin-ai-benchmarks"
+        "laravel-ai",
+        "llm",
+        "pest",
+        "regression-testing"
     ],
     "homepage": "https://github.com/jkudish/pest-plugin-ai-benchmarks",
     "license": "MIT",
+    "type": "library",
     "authors": [
         {
             "name": "Joey Kudish",
-            "email": "joachim.kudish@gmail.com",
+            "email": "joey@jkudish.com",
             "role": "Developer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/jkudish/pest-plugin-ai-benchmarks/issues",
+        "source": "https://github.com/jkudish/pest-plugin-ai-benchmarks"
+    },
+    "funding": [
+        {
+            "type": "github",
+            "url": "https://github.com/sponsors/jkudish"
         }
     ],
     "require": {
@@ -58,7 +74,8 @@
         "analyse": "vendor/bin/phpstan analyse --memory-limit=1G",
         "test": "vendor/bin/pest",
         "test-coverage": "vendor/bin/pest --coverage",
-        "format": "vendor/bin/pint"
+        "format": "vendor/bin/pint",
+        "lint:check": "vendor/bin/pint --test"
     },
     "config": {
         "sort-packages": true,
