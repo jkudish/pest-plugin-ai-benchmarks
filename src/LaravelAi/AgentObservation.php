@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Jkudish\PestAiBenchmarks\LaravelAi;
 
 use InvalidArgumentException;
+use Jkudish\LaravelAiPricing\ValueObjects\Money;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
 
@@ -19,6 +20,7 @@ final readonly class AgentObservation
         public float $latencyMs,
         public bool $succeeded,
         public ExecutionMode $mode = ExecutionMode::Live,
+        public ?Money $providerReportedCost = null,
     ) {
         if (trim($this->requestedProvider) === '' || trim($this->requestedModel) === '') {
             throw new InvalidArgumentException('Requested provider and model must not be empty.');
