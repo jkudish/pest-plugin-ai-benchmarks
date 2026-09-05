@@ -4,13 +4,20 @@ declare(strict_types=1);
 
 use GuzzleHttp\Psr7\Response as Psr7Response;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\Response as HttpResponse;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Http;
 use Jkudish\PestAiBenchmarks\LaravelAi\BenchmarkAgentMiddleware;
 use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
+use Jkudish\PestAiBenchmarks\Tests\LaravelAi\Fixtures\BenchmarkedAgent;
 use Laravel\Ai\AiManager;
+use Laravel\Ai\AiServiceProvider;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\Providers\TextProvider;
+use Laravel\Ai\Events\AgentFailed;
+use Laravel\Ai\Events\AgentFailedOver;
 use Laravel\Ai\Prompts\AgentPrompt;
 use Laravel\Ai\Providers\OpenRouterProvider;
 use Laravel\Ai\Responses\AgentResponse;
@@ -225,6 +232,73 @@ it('does not fail a successful benchmark when provider pricing metadata is malfo
         ->and($observation->succeeded)->toBeTrue()
         ->and($observation->providerReportedCost)->toBeNull()
         ->and($observation->usage->inputTokens)->toBe(10);
+});
+
+it('observes each attempt of a native Laravel AI failover prompt with stubbed transport', function (): void {
+    // Boot the SDK container bindings (AiManager singleton, ai config) for this test only,
+    // so the native agent failover path resolves real providers through the test app.
+    $this->app->register(AiServiceProvider::class);
+
+    config([
+        'ai.providers.fail-primary' => ['driver' => 'openrouter', 'key' => 'test-key'],
+        'ai.providers.fail-backup' => ['driver' => 'openrouter', 'key' => 'test-key'],
+    ]);
+
+    Http::preventStrayRequests();
+
+    Http::fakeSequence()
+        ->push(status: 429)
+        ->pushResponse(Http::response([
+            'id' => 'chatcmpl-fallback',
+            'object' => 'chat.completion',
+            'model' => 'google/gemini-effective',
+            'choices' => [[
+                'index' => 0,
+                'message' => ['role' => 'assistant', 'content' => '{"merchant":"Acme"}'],
+                'finish_reason' => 'stop',
+            ],
+            ],
+            'usage' => ['prompt_tokens' => 12, 'completion_tokens' => 4],
+        ]));
+
+    Event::fake();
+
+    RuntimeObservationCollector::begin();
+
+    $response = (new BenchmarkedAgent)->prompt(
+        'Extract this receipt.',
+        provider: ['fail-primary' => 'primary/model-a', 'fail-backup' => 'backup/model-b'],
+    );
+
+    $observations = RuntimeObservationCollector::finish();
+
+    expect($response->text)->toBe('{"merchant":"Acme"}')
+        ->and($observations)->toHaveCount(2)
+        // The 429-limited first provider attempt is recorded as a failed observation...
+        ->and($observations[0]->succeeded)->toBeFalse()
+        ->and($observations[0]->requestedProvider)->toBe('fail-primary')
+        ->and($observations[0]->requestedModel)->toBe('primary/model-a')
+        ->and($observations[0]->effectiveProvider)->toBeNull()
+        ->and($observations[0]->effectiveModel)->toBeNull()
+        // ...and the native fallback attempt is recorded as a successful observation...
+        ->and($observations[1]->succeeded)->toBeTrue()
+        ->and($observations[1]->requestedProvider)->toBe('fail-backup')
+        ->and($observations[1]->requestedModel)->toBe('backup/model-b')
+        ->and($observations[1]->effectiveProvider)->toBe('fail-backup')
+        ->and($observations[1]->effectiveModel)->toBe('google/gemini-effective')
+        ->and($observations[1]->usage->inputTokens)->toBe(12)
+        ->and($observations[1]->usage->outputTokens)->toBe(4)
+        // ...with the run's terminal failure absent because the fallback succeeded.
+        ->and(Event::dispatched(AgentFailedOver::class))->toHaveCount(1)
+        ->and(Event::assertDispatched(AgentFailedOver::class, fn (AgentFailedOver $event): bool => $event->invocationId === $response->invocationId))
+        ->and(Event::assertNotDispatched(AgentFailed::class));
+
+    // Exactly one transport call per attempt, no extras, and both attempts carried the same prompt.
+    Http::assertSentCount(2);
+    foreach (['primary/model-a', 'backup/model-b'] as $model) {
+        Http::assertSent(fn (Request $request): bool => $request['model'] === $model
+            && str_contains($request->body(), 'Extract this receipt.'));
+    }
 });
 
 it('rejects nested observation spans', function (): void {
