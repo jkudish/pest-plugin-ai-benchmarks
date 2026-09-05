@@ -227,6 +227,71 @@ it('does not fail a successful benchmark when provider pricing metadata is malfo
         ->and($observation->usage->inputTokens)->toBe(10);
 });
 
+it('records one observation per Laravel AI 0.11 fallback attempt prompt and passes it through untouched', function (): void {
+    $provider = Mockery::mock(TextProvider::class);
+    $provider->shouldReceive('name')->twice()->andReturn('openrouter');
+    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
+    $agent = Mockery::mock(Agent::class);
+
+    $attempt = new AgentPrompt(
+        agent: $agent,
+        prompt: 'Extract this receipt.',
+        attachments: [],
+        provider: $provider,
+        model: 'primary-model',
+        timeout: null,
+        invocationId: 'invocation-011',
+        parentInvocationId: 'parent-invocation-011',
+        parentToolInvocationId: null,
+        isFinalAttempt: false,
+    );
+    $finalAttempt = new AgentPrompt(
+        agent: $agent,
+        prompt: 'Extract this receipt.',
+        attachments: [],
+        provider: $provider,
+        model: 'fallback-model',
+        timeout: null,
+        invocationId: 'invocation-011-final',
+        parentInvocationId: 'parent-invocation-011',
+        parentToolInvocationId: null,
+        isFinalAttempt: true,
+    );
+    $response = new AgentResponse(
+        invocationId: 'invocation-011-final',
+        text: 'ok',
+        usage: new Usage(promptTokens: 5, completionTokens: 1),
+        meta: new Meta(provider: 'google', model: 'gemini-effective'),
+    );
+
+    expect($attempt->isFinalAttempt())->toBeFalse()
+        ->and($finalAttempt->isFinalAttempt())->toBeTrue();
+
+    RuntimeObservationCollector::begin();
+
+    $middleware = new BenchmarkAgentMiddleware;
+    try {
+        $middleware->handle($attempt, fn (): never => throw new RuntimeException('Failed over.'));
+    } catch (RuntimeException) {
+        // The SDK fails this non-final attempt over to the next provider.
+    }
+    $actual = $middleware->handle($finalAttempt, fn (AgentPrompt $handled): AgentResponse => $response);
+    $observations = RuntimeObservationCollector::finish();
+
+    expect($actual)->toBe($response)
+        ->and($observations)->toHaveCount(2)
+        ->and($observations[0]->requestedProvider)->toBe('openrouter')
+        ->and($observations[0]->requestedModel)->toBe('primary-model')
+        ->and($observations[0]->effectiveProvider)->toBeNull()
+        ->and($observations[0]->effectiveModel)->toBeNull()
+        ->and($observations[0]->succeeded)->toBeFalse()
+        ->and($observations[1]->requestedProvider)->toBe('openrouter')
+        ->and($observations[1]->requestedModel)->toBe('fallback-model')
+        ->and($observations[1]->effectiveProvider)->toBe('google')
+        ->and($observations[1]->effectiveModel)->toBe('gemini-effective')
+        ->and($observations[1]->succeeded)->toBeTrue();
+});
+
 it('rejects nested observation spans', function (): void {
     RuntimeObservationCollector::begin();
 
