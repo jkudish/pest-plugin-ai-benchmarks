@@ -295,7 +295,10 @@ it('observes each attempt of a native Laravel AI failover prompt with stubbed tr
 
     // Exactly one transport call per attempt, no extras, and both attempts carried the same prompt.
     Http::assertSentCount(2);
-    Http::assertSent(fn (Request $request): bool => str_contains($request->body(), 'Extract this receipt.'));
+    foreach (['primary/model-a', 'backup/model-b'] as $model) {
+        Http::assertSent(fn (Request $request): bool => $request['model'] === $model
+            && str_contains($request->body(), 'Extract this receipt.'));
+    }
 });
 
 it('rejects nested observation spans', function (): void {
