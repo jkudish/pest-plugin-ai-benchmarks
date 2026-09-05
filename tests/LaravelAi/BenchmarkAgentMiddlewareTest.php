@@ -4,13 +4,20 @@ declare(strict_types=1);
 
 use GuzzleHttp\Psr7\Response as Psr7Response;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\Response as HttpResponse;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Http;
 use Jkudish\PestAiBenchmarks\LaravelAi\BenchmarkAgentMiddleware;
 use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
+use Jkudish\PestAiBenchmarks\Tests\LaravelAi\Fixtures\BenchmarkedAgent;
 use Laravel\Ai\AiManager;
+use Laravel\Ai\AiServiceProvider;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\Providers\TextProvider;
+use Laravel\Ai\Events\AgentFailed;
+use Laravel\Ai\Events\AgentFailedOver;
 use Laravel\Ai\Prompts\AgentPrompt;
 use Laravel\Ai\Providers\OpenRouterProvider;
 use Laravel\Ai\Responses\AgentResponse;
@@ -227,69 +234,68 @@ it('does not fail a successful benchmark when provider pricing metadata is malfo
         ->and($observation->usage->inputTokens)->toBe(10);
 });
 
-it('records one observation per Laravel AI 0.11 fallback attempt prompt and passes it through untouched', function (): void {
-    $provider = Mockery::mock(TextProvider::class);
-    $provider->shouldReceive('name')->twice()->andReturn('openrouter');
-    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
-    $agent = Mockery::mock(Agent::class);
+it('observes each attempt of a native Laravel AI failover prompt with stubbed transport', function (): void {
+    // Boot the SDK container bindings (AiManager singleton, ai config) for this test only,
+    // so the native agent failover path resolves real providers through the test app.
+    $this->app->register(AiServiceProvider::class);
 
-    $attempt = new AgentPrompt(
-        agent: $agent,
-        prompt: 'Extract this receipt.',
-        attachments: [],
-        provider: $provider,
-        model: 'primary-model',
-        timeout: null,
-        invocationId: 'invocation-011',
-        parentInvocationId: 'parent-invocation-011',
-        parentToolInvocationId: null,
-        isFinalAttempt: false,
-    );
-    $finalAttempt = new AgentPrompt(
-        agent: $agent,
-        prompt: 'Extract this receipt.',
-        attachments: [],
-        provider: $provider,
-        model: 'fallback-model',
-        timeout: null,
-        invocationId: 'invocation-011-final',
-        parentInvocationId: 'parent-invocation-011',
-        parentToolInvocationId: null,
-        isFinalAttempt: true,
-    );
-    $response = new AgentResponse(
-        invocationId: 'invocation-011-final',
-        text: 'ok',
-        usage: new Usage(promptTokens: 5, completionTokens: 1),
-        meta: new Meta(provider: 'google', model: 'gemini-effective'),
-    );
+    config([
+        'ai.providers.fail-primary' => ['driver' => 'openrouter', 'key' => 'test-key'],
+        'ai.providers.fail-backup' => ['driver' => 'openrouter', 'key' => 'test-key'],
+    ]);
 
-    expect($attempt->isFinalAttempt())->toBeFalse()
-        ->and($finalAttempt->isFinalAttempt())->toBeTrue();
+    Http::preventStrayRequests();
+
+    Http::fakeSequence()
+        ->push(status: 429)
+        ->pushResponse(Http::response([
+            'id' => 'chatcmpl-fallback',
+            'object' => 'chat.completion',
+            'model' => 'google/gemini-effective',
+            'choices' => [[
+                'index' => 0,
+                'message' => ['role' => 'assistant', 'content' => '{"merchant":"Acme"}'],
+                'finish_reason' => 'stop',
+            ],
+            ],
+            'usage' => ['prompt_tokens' => 12, 'completion_tokens' => 4],
+        ]));
+
+    Event::fake();
 
     RuntimeObservationCollector::begin();
 
-    $middleware = new BenchmarkAgentMiddleware;
-    try {
-        $middleware->handle($attempt, fn (): never => throw new RuntimeException('Failed over.'));
-    } catch (RuntimeException) {
-        // The SDK fails this non-final attempt over to the next provider.
-    }
-    $actual = $middleware->handle($finalAttempt, fn (AgentPrompt $handled): AgentResponse => $response);
+    $response = (new BenchmarkedAgent)->prompt(
+        'Extract this receipt.',
+        provider: ['fail-primary' => 'primary/model-a', 'fail-backup' => 'backup/model-b'],
+    );
+
     $observations = RuntimeObservationCollector::finish();
 
-    expect($actual)->toBe($response)
+    expect($response->text)->toBe('{"merchant":"Acme"}')
         ->and($observations)->toHaveCount(2)
-        ->and($observations[0]->requestedProvider)->toBe('openrouter')
-        ->and($observations[0]->requestedModel)->toBe('primary-model')
+        // The 429-limited first provider attempt is recorded as a failed observation...
+        ->and($observations[0]->succeeded)->toBeFalse()
+        ->and($observations[0]->requestedProvider)->toBe('fail-primary')
+        ->and($observations[0]->requestedModel)->toBe('primary/model-a')
         ->and($observations[0]->effectiveProvider)->toBeNull()
         ->and($observations[0]->effectiveModel)->toBeNull()
-        ->and($observations[0]->succeeded)->toBeFalse()
-        ->and($observations[1]->requestedProvider)->toBe('openrouter')
-        ->and($observations[1]->requestedModel)->toBe('fallback-model')
-        ->and($observations[1]->effectiveProvider)->toBe('google')
-        ->and($observations[1]->effectiveModel)->toBe('gemini-effective')
-        ->and($observations[1]->succeeded)->toBeTrue();
+        // ...and the native fallback attempt is recorded as a successful observation...
+        ->and($observations[1]->succeeded)->toBeTrue()
+        ->and($observations[1]->requestedProvider)->toBe('fail-backup')
+        ->and($observations[1]->requestedModel)->toBe('backup/model-b')
+        ->and($observations[1]->effectiveProvider)->toBe('fail-backup')
+        ->and($observations[1]->effectiveModel)->toBe('google/gemini-effective')
+        ->and($observations[1]->usage->inputTokens)->toBe(12)
+        ->and($observations[1]->usage->outputTokens)->toBe(4)
+        // ...with the run's terminal failure absent because the fallback succeeded.
+        ->and(Event::dispatched(AgentFailedOver::class))->toHaveCount(1)
+        ->and(Event::assertDispatched(AgentFailedOver::class, fn (AgentFailedOver $event): bool => $event->invocationId === $response->invocationId))
+        ->and(Event::assertNotDispatched(AgentFailed::class));
+
+    // Exactly one transport call per attempt, no extras, and both attempts carried the same prompt.
+    Http::assertSentCount(2);
+    Http::assertSent(fn (Request $request): bool => str_contains($request->body(), 'Extract this receipt.'));
 });
 
 it('rejects nested observation spans', function (): void {
