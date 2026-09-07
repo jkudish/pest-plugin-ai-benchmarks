@@ -348,6 +348,17 @@ it('rejects malformed promotion candidates before replacing an existing baseline
         'invalid measurement mode' => function (array &$scorecard): void {
             $scorecard['trials'][0]['results'][0]['measurements'][0]['mode'] = 'replayed';
         },
+        'missing primary Pest result' => function (array &$scorecard): void {
+            $scorecard['trials'][0]['results'][0]['scorer'] = 'custom-scorer';
+        },
+        'missing target measurement' => function (array &$scorecard): void {
+            $scorecard['trials'][0]['results'][0]['measurements'][0]['component'] = 'judge';
+        },
+        'oversized nested object key' => function (array &$scorecard): void {
+            $scorecard['trials'][0]['results'][0]['measurements'][0]['usage'] = [
+                str_repeat('k', 8_193) => 1,
+            ];
+        },
     ];
 
     foreach ($mutations as $label => $mutate) {

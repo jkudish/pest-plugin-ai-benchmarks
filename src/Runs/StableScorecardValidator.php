@@ -60,6 +60,7 @@ final class StableScorecardValidator
         }
 
         $trialIds = [];
+        $resultIds = [];
         $trialIdentities = [];
 
         foreach ($trials as $trial) {
@@ -67,7 +68,7 @@ final class StableScorecardValidator
                 throw new RuntimeException('Stable scorecard contains invalid trial evidence.');
             }
 
-            $trialId = self::trial($trial, $scorecardId, $executionId);
+            $trialId = self::trial($trial, $scorecardId, $executionId, $resultIds);
 
             if (isset($trialIds[$trialId])) {
                 throw new RuntimeException('Stable scorecard contains duplicate trial identities.');
@@ -125,8 +126,11 @@ final class StableScorecardValidator
         }
     }
 
-    /** @param array<mixed, mixed> $trial */
-    private static function trial(array $trial, mixed $scorecardId, mixed $executionId): string
+    /**
+     * @param  array<mixed, mixed>  $trial
+     * @param  array<string, true>  $resultIds
+     */
+    private static function trial(array $trial, mixed $scorecardId, mixed $executionId, array &$resultIds): string
     {
         self::keys($trial, ['trial_id', 'source', 'case_id', 'configuration', 'repeat', 'fingerprint', 'results'], [], 'trial');
         $trialId = self::id($trial['trial_id'] ?? null, 'trial', 'trial ID');
@@ -141,11 +145,12 @@ final class StableScorecardValidator
         self::string($trial['fingerprint'] ?? null, 'trial fingerprint');
         $results = $trial['results'] ?? null;
 
-        if (! is_array($results) || ! array_is_list($results) || $results === []) {
+        if (! is_array($results)
+            || ! array_is_list($results)
+            || $results === []
+            || count($results) > Trial::MAX_RESULTS) {
             throw new RuntimeException('Stable scorecard trial results must be a non-empty list.');
         }
-
-        $resultIds = [];
 
         foreach ($results as $result) {
             if (! is_array($result)) {
@@ -159,6 +164,19 @@ final class StableScorecardValidator
             }
 
             $resultIds[$resultId] = true;
+        }
+
+        $primary = $results[0];
+        $primaryMeasurements = $primary['measurements'] ?? null;
+
+        if (($primary['scorer'] ?? null) !== 'pest:test'
+            || ! is_array($primaryMeasurements)
+            || ! array_any(
+                $primaryMeasurements,
+                static fn (mixed $measurement): bool => is_array($measurement)
+                    && ($measurement['component'] ?? null) === 'target',
+            )) {
+            throw new RuntimeException('Stable scorecard trial must begin with target evidence from the Pest test result.');
         }
 
         return $trialId;
@@ -426,7 +444,13 @@ final class StableScorecardValidator
             throw new RuntimeException("Stable scorecard {$label} contains an invalid JSON value.");
         }
 
-        foreach ($value as $item) {
+        $list = array_is_list($value);
+
+        foreach ($value as $key => $item) {
+            if (! $list && (! is_string($key) || $key === '' || strlen($key) > $maxStringBytes)) {
+                throw new RuntimeException("Stable scorecard {$label} contains an invalid object key.");
+            }
+
             $entries++;
 
             if ($entries > $maxEntries) {

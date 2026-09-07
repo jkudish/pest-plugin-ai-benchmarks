@@ -8,6 +8,7 @@ use Jkudish\LaravelAiPricing\Enums\PricingSource;
 use Jkudish\LaravelAiPricing\ValueObjects\CostQuote;
 use Jkudish\LaravelAiPricing\ValueObjects\Money;
 use Jkudish\LaravelAiPricing\ValueObjects\PricingObservation;
+use Jkudish\PestAiBenchmarks\Comparisons\ScorecardEvidence;
 use Jkudish\PestAiBenchmarks\Configuration;
 use Jkudish\PestAiBenchmarks\LaravelAi\AgentObservation;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
@@ -222,11 +223,14 @@ it('keeps judge observations out of target retry accounting', function (): void 
         ],
     );
 
-    $measurements = ExecutionRecorder::flush()[0]->toArray()['trials'][0]['results'][0]['measurements'];
+    $scorecard = ExecutionRecorder::flush()[0]->toArray();
+    $measurements = $scorecard['trials'][0]['results'][0]['measurements'];
+    $aggregate = (new ScorecardEvidence)->aggregate($scorecard, 'candidate');
 
     expect(array_column($measurements, 'component'))->toBe(['target', 'target', 'judge'])
         ->and(array_column($measurements, 'retries'))->toBe([0, 1, 0])
-        ->and(array_unique(array_column($measurements, 'fingerprint')))->toHaveCount(3);
+        ->and(array_unique(array_column($measurements, 'fingerprint')))->toHaveCount(3)
+        ->and($aggregate->medianLatency)->toBe(25.0);
 });
 
 it('keeps pre-execution trial fingerprints stable while measurement fingerprints retain runtime identity', function (): void {
