@@ -14,8 +14,31 @@ use Jkudish\PestAiBenchmarks\LaravelAi\AgentObservation;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
 use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
+use Jkudish\PestAiBenchmarks\Runs\RunBundle;
 use Jkudish\PestAiBenchmarks\Scorecards\Component;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
+use Pest\TestSuite;
+
+function recordPrivateOutput(mixed $output): void
+{
+    ExecutionRecorder::record(
+        benchmark: 'private output fidelity',
+        caseId: 'output-1',
+        configurationName: 'candidate',
+        configuration: Configuration::model('openrouter', 'router/requested'),
+        identity: new ModelIdentityEvidence('openrouter', 'router/requested', 'openrouter', 'router/requested'),
+        latencyMs: 1,
+        passed: true,
+        output: $output,
+        context: null,
+        targetIdentity: [
+            'file' => 'tests/Evals/Output.php',
+            'start_line' => 10,
+            'end_line' => 20,
+            'source_sha256' => str_repeat('e', 64),
+        ],
+    );
+}
 
 beforeEach(function (): void {
     ExecutionRecorder::reset();
@@ -271,4 +294,50 @@ it('keeps pre-execution trial fingerprints stable while measurement fingerprints
         ->and($trials[0]['fingerprint'])->toBe($trials[1]['fingerprint'])
         ->and($trials[0]['results'][0]['measurements'][0]['fingerprint'])
         ->not->toBe($trials[1]['results'][0]['measurements'][0]['fingerprint']);
+});
+
+it('preserves integral floats from live recording into private replay', function (): void {
+    $root = TestSuite::getInstance()->rootPath;
+    $pattern = $root.'/storage/app/ai-evals/runs/*/'.RunBundle::REPLAY_FILE;
+    $before = glob($pattern) ?: [];
+
+    recordPrivateOutput(['score' => 1.0]);
+    ExecutionRecorder::flush();
+
+    $after = glob($pattern) ?: [];
+    $created = array_values(array_diff($after, $before));
+    $replay = (string) file_get_contents($created[0]);
+    $decoded = json_decode($replay, true, flags: JSON_THROW_ON_ERROR);
+
+    expect($created)->toHaveCount(1)
+        ->and($replay)->toContain('"score": 1.0')
+        ->and($decoded['trials'][0]['output']['score'])->toBe(1.0)
+        ->and(is_float($decoded['trials'][0]['output']['score']))->toBeTrue();
+});
+
+it('rejects invalid live output before private replay persistence', function (mixed $output): void {
+    recordPrivateOutput($output);
+
+    expect(fn () => ExecutionRecorder::flush())
+        ->toThrow(InvalidArgumentException::class);
+})->with([
+    'infinity' => INF,
+    'object' => new stdClass,
+]);
+
+it('rejects live resource output before private replay persistence', function (): void {
+    $resource = fopen('php://memory', 'r');
+
+    if ($resource === false) {
+        throw new RuntimeException('Unable to create a test resource.');
+    }
+
+    try {
+        recordPrivateOutput($resource);
+
+        expect(fn () => ExecutionRecorder::flush())
+            ->toThrow(InvalidArgumentException::class, 'JSON-safe');
+    } finally {
+        fclose($resource);
+    }
 });

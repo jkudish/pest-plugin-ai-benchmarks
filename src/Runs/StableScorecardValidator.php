@@ -7,6 +7,8 @@ namespace Jkudish\PestAiBenchmarks\Runs;
 use DateTimeImmutable;
 use DateTimeZone;
 use InvalidArgumentException;
+use Jkudish\LaravelAiPricing\ValueObjects\Money;
+use Jkudish\PestAiBenchmarks\Comparisons\ScorecardEvidence;
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
 use Jkudish\PestAiBenchmarks\Results\OpaqueContext;
 use Jkudish\PestAiBenchmarks\Scorecards\Measurement;
@@ -16,6 +18,8 @@ use Jkudish\PestAiBenchmarks\Scorecards\Scorecard;
 use Jkudish\PestAiBenchmarks\Scorecards\Trial;
 use JsonException;
 use RuntimeException;
+use stdClass;
+use Throwable;
 
 /** @internal */
 final class StableScorecardValidator
@@ -62,6 +66,7 @@ final class StableScorecardValidator
         $trialIds = [];
         $resultIds = [];
         $trialIdentities = [];
+        $configurations = [];
 
         foreach ($trials as $trial) {
             if (! is_array($trial)) {
@@ -77,6 +82,7 @@ final class StableScorecardValidator
             $trialIds[$trialId] = true;
             $caseId = self::string($trial['case_id'] ?? null, 'trial case ID');
             $configuration = self::string($trial['configuration'] ?? null, 'trial configuration');
+            $configurations[$configuration] = true;
             $repeat = $trial['repeat'] ?? null;
 
             if (! is_int($repeat)) {
@@ -95,7 +101,7 @@ final class StableScorecardValidator
         if (array_key_exists('context', $scorecard)) {
             $context = $scorecard['context'];
 
-            if (! is_array($context)) {
+            if (! is_array($context) && ! $context instanceof stdClass) {
                 throw new RuntimeException('Stable scorecard context must be a JSON object.');
             }
 
@@ -108,11 +114,17 @@ final class StableScorecardValidator
                 OpaqueContext::MAX_BYTES,
             );
 
-            foreach ($context as $key => $_) {
+            foreach ((array) $context as $key => $_) {
                 if (! is_string($key) || $key === '') {
                     throw new RuntimeException('Stable scorecard context keys must be non-empty strings.');
                 }
             }
+        }
+
+        self::aggregate($scorecard);
+
+        foreach (array_keys($configurations) as $configuration) {
+            self::aggregate($scorecard, $configuration);
         }
 
         try {
@@ -177,6 +189,26 @@ final class StableScorecardValidator
                     && ($measurement['component'] ?? null) === 'target',
             )) {
             throw new RuntimeException('Stable scorecard trial must begin with target evidence from the Pest test result.');
+        }
+
+        $targetLatency = 0.0;
+
+        foreach ($primaryMeasurements as $measurement) {
+            if (! is_array($measurement) || ($measurement['component'] ?? null) !== 'target') {
+                continue;
+            }
+
+            $latency = $measurement['latency_ms'] ?? null;
+
+            if (! is_int($latency) && ! is_float($latency)) {
+                throw new RuntimeException('Stable scorecard measurement latency is invalid.');
+            }
+
+            $targetLatency += (float) $latency;
+
+            if (! is_finite($targetLatency)) {
+                throw new RuntimeException('Stable scorecard aggregate target latency must be finite.');
+            }
         }
 
         return $trialId;
@@ -255,12 +287,14 @@ final class StableScorecardValidator
         self::model($measurement['effective_model'] ?? null, 'effective model');
         self::boundedNumber($measurement['latency_ms'] ?? null, 'measurement latency', 0, null);
 
-        if (! is_array($measurement['usage'] ?? null)) {
+        $usage = $measurement['usage'] ?? null;
+
+        if (! is_array($usage) && ! $usage instanceof stdClass) {
             throw new RuntimeException('Stable scorecard measurement usage must be a JSON object.');
         }
 
         self::jsonObject(
-            $measurement['usage'],
+            $usage,
             'measurement usage',
             NormalizedObject::MAX_DEPTH,
             NormalizedObject::MAX_ENTRIES,
@@ -280,19 +314,46 @@ final class StableScorecardValidator
 
         self::keys($pricing, ['completeness', 'snapshot'], [], 'measurement pricing');
 
-        if (! in_array($pricing['completeness'] ?? null, ['complete', 'partial', 'unavailable'], true)
-            || ! is_array($pricing['snapshot'])) {
+        $completeness = $pricing['completeness'] ?? null;
+        $snapshot = $pricing['snapshot'] ?? null;
+
+        if (! in_array($completeness, ['complete', 'partial', 'unavailable'], true)
+            || ! is_array($snapshot) && ! $snapshot instanceof stdClass) {
             throw new RuntimeException('Stable scorecard measurement pricing is invalid.');
         }
 
         self::jsonObject(
-            $pricing['snapshot'],
+            $snapshot,
             'measurement pricing snapshot',
             NormalizedObject::MAX_DEPTH,
             NormalizedObject::MAX_ENTRIES,
             NormalizedObject::MAX_STRING_BYTES,
             NormalizedObject::MAX_BYTES,
         );
+
+        if ($completeness === 'complete') {
+            $snapshot = (array) $snapshot;
+            $cost = $snapshot['cost'] ?? null;
+
+            if (! is_array($cost)) {
+                throw new RuntimeException('Stable scorecard complete pricing cost is invalid.');
+            }
+
+            self::keys($cost, ['amount', 'currency'], [], 'measurement pricing cost');
+            $amount = $cost['amount'] ?? null;
+            $currency = $cost['currency'] ?? null;
+
+            if (! is_string($amount) || ! is_string($currency)) {
+                throw new RuntimeException('Stable scorecard complete pricing cost is invalid.');
+            }
+
+            try {
+                new Money($amount, $currency);
+            } catch (Throwable $exception) {
+                throw new RuntimeException('Stable scorecard complete pricing cost is invalid.', previous: $exception);
+            }
+        }
+
         self::string($measurement['fingerprint'] ?? null, 'measurement fingerprint');
     }
 
@@ -357,6 +418,16 @@ final class StableScorecardValidator
         }
     }
 
+    /** @param array<string, mixed> $scorecard */
+    private static function aggregate(array $scorecard, ?string $configuration = null): void
+    {
+        try {
+            (new ScorecardEvidence)->aggregate($scorecard, $configuration);
+        } catch (Throwable $exception) {
+            throw new RuntimeException('Stable scorecard cannot be aggregated safely.', previous: $exception);
+        }
+    }
+
     private static function string(mixed $value, string $label, int $minimum = 1, ?int $maximum = null): string
     {
         if (! is_string($value) || strlen($value) < $minimum || $maximum !== null && strlen($value) > $maximum || trim($value) === '') {
@@ -388,21 +459,23 @@ final class StableScorecardValidator
         }
     }
 
-    /** @param array<mixed> $value */
+    /** @param array<mixed>|stdClass $value */
     private static function jsonObject(
-        array $value,
+        array|stdClass $value,
         string $label,
         int $maxDepth,
         int $maxEntries,
         int $maxStringBytes,
         int $maxBytes,
     ): void {
-        if ($value !== [] && array_is_list($value)) {
+        $normalized = (array) $value;
+
+        if ($normalized !== [] && array_is_list($normalized)) {
             throw new RuntimeException("Stable scorecard {$label} must be a JSON object.");
         }
 
         $entries = 0;
-        self::jsonValue($value, $label, 1, $entries, $maxDepth, $maxEntries, $maxStringBytes);
+        self::jsonValue($normalized, $label, 1, $entries, $maxDepth, $maxEntries, $maxStringBytes);
 
         try {
             $encoded = json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

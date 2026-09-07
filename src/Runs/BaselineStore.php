@@ -7,6 +7,7 @@ namespace Jkudish\PestAiBenchmarks\Runs;
 use Jkudish\PestAiBenchmarks\Scorecards\Scorecard;
 use JsonException;
 use RuntimeException;
+use stdClass;
 
 /** @internal */
 final readonly class BaselineStore
@@ -83,6 +84,31 @@ final readonly class BaselineStore
             foreach ($results as $resultIndex => $result) {
                 if (is_array($result)) {
                     $result['reasoning'] = null;
+                    $measurements = $result['measurements'] ?? null;
+
+                    if (is_array($measurements)) {
+                        foreach ($measurements as $measurementIndex => $measurement) {
+                            if (! is_array($measurement)) {
+                                continue;
+                            }
+
+                            if (($measurement['usage'] ?? null) === []) {
+                                $measurement['usage'] = new stdClass;
+                            }
+
+                            $pricing = $measurement['pricing'] ?? null;
+
+                            if (is_array($pricing) && ($pricing['snapshot'] ?? null) === []) {
+                                $pricing['snapshot'] = new stdClass;
+                                $measurement['pricing'] = $pricing;
+                            }
+
+                            $measurements[$measurementIndex] = $measurement;
+                        }
+
+                        $result['measurements'] = $measurements;
+                    }
+
                     $results[$resultIndex] = $result;
                 }
             }

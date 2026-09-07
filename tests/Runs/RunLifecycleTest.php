@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
+use Jkudish\PestAiBenchmarks\Results\OpaqueContext;
 use Jkudish\PestAiBenchmarks\Runs\BaselineStore;
 use Jkudish\PestAiBenchmarks\Runs\ReplayPayload;
 use Jkudish\PestAiBenchmarks\Runs\ReplayReader;
@@ -29,6 +30,11 @@ function lifecycleScorecard(
     string $fingerprint = 'sha256:trial-one',
     string $measurementFingerprint = 'sha256:measurement-one',
     ExecutionMode $mode = ExecutionMode::Live,
+    float $latencyMs = 125.5,
+    array $usage = ['input_tokens' => 10, 'output_tokens' => 2],
+    PricingCompleteness $pricingCompleteness = PricingCompleteness::Complete,
+    array $pricingSnapshot = ['cost' => ['amount' => '0.001', 'currency' => 'USD']],
+    ?OpaqueContext $context = null,
 ): Scorecard {
     return new Scorecard(
         id: EvidenceId::from('sc_01JRUNSCORECARD', 'sc'),
@@ -57,11 +63,11 @@ function lifecycleScorecard(
                                 requestedModel: 'model/requested',
                                 effectiveProvider: 'provider',
                                 effectiveModel: 'model-effective',
-                                latencyMs: 125.5,
-                                usage: ['input_tokens' => 10, 'output_tokens' => 2],
+                                latencyMs: $latencyMs,
+                                usage: $usage,
                                 retries: 0,
-                                pricingCompleteness: PricingCompleteness::Complete,
-                                pricingSnapshot: ['currency' => 'USD', 'cost' => '0.001'],
+                                pricingCompleteness: $pricingCompleteness,
+                                pricingSnapshot: $pricingSnapshot,
                                 fingerprint: $measurementFingerprint,
                             ),
                         ],
@@ -69,6 +75,7 @@ function lifecycleScorecard(
                 ],
             ),
         ],
+        context: $context,
     );
 }
 
@@ -191,6 +198,43 @@ it('preserves exact JSON-safe private replay output without stable evidence sani
 
     expect($payload->toArray()['trials'][0]['output'])->toBe($output)
         ->and(json_decode($payload->toJson(), true, flags: JSON_THROW_ON_ERROR)['trials'][0]['output'])->toBe($output);
+});
+
+it('preserves integral floats in private replay JSON and readers', function (): void {
+    $paths = lifecyclePaths();
+    $runId = new RunId('run-integral-float');
+    $payload = new ReplayPayload([
+        [
+            'trial_id' => 'trial_01JRUNTRIAL',
+            'fingerprint' => 'sha256:trial-one',
+            'output' => ['score' => 1.0],
+        ],
+    ]);
+
+    (new RunBundle($paths, $runId))->write(lifecycleScorecard(), $payload);
+    $received = null;
+    (new ReplayReader($paths))->replay($runId, function (string $_, mixed $output) use (&$received): void {
+        $received = $output;
+    });
+
+    $reused = null;
+    (new ResumeReader($paths))->reuseCompletedTrial(
+        $runId,
+        'run lifecycle',
+        'case-1',
+        'production',
+        1,
+        'sha256:trial-one',
+        function (array $_, mixed $output) use (&$reused): void {
+            $reused = $output;
+        },
+    );
+
+    expect($payload->toJson())->toContain('"score": 1.0')
+        ->and($received['score'])->toBe(1.0)
+        ->and(is_float($received['score']))->toBeTrue()
+        ->and($reused['score'])->toBe(1.0)
+        ->and(is_float($reused['score']))->toBeTrue();
 });
 
 it('rejects non-JSON-safe and non-finite private replay output', function (mixed $output): void {
@@ -317,6 +361,31 @@ it('promotes a saved live run without copying private replay output', function (
         ->and($baselineData['trials'][0]['results'][0]['reasoning'])->toBeNull();
 });
 
+it('accepts serializer empty objects and preserves them through direct and saved-run promotion', function (): void {
+    $paths = lifecyclePaths();
+    $store = new BaselineStore($paths);
+    $scorecard = lifecycleScorecard(
+        usage: [],
+        pricingCompleteness: PricingCompleteness::Unavailable,
+        pricingSnapshot: [],
+        context: new OpaqueContext,
+    );
+
+    $store->save('direct-empty-objects', $scorecard);
+    $direct = (string) file_get_contents($paths->baseline('direct-empty-objects'));
+
+    $runId = new RunId('run-promote-empty-objects');
+    (new RunBundle($paths, $runId))->write($scorecard, lifecycleReplay());
+    $store->promote($runId, 'saved-empty-objects');
+    $promoted = (string) file_get_contents($paths->baseline('saved-empty-objects'));
+
+    foreach ([$direct, $promoted] as $json) {
+        expect($json)->toContain('"usage": {}')
+            ->toContain('"snapshot": {}')
+            ->not->toContain('"context"');
+    }
+});
+
 it('rejects malformed promotion candidates before replacing an existing baseline', function (): void {
     $paths = lifecyclePaths();
     $store = new BaselineStore($paths);
@@ -344,6 +413,22 @@ it('rejects malformed promotion candidates before replacing an existing baseline
         },
         'invalid pricing structure' => function (array &$scorecard): void {
             unset($scorecard['trials'][0]['results'][0]['measurements'][0]['pricing']['snapshot']);
+        },
+        'invalid complete pricing amount' => function (array &$scorecard): void {
+            $scorecard['trials'][0]['results'][0]['measurements'][0]['pricing']['snapshot']['cost']['amount'] = 'not-a-decimal';
+        },
+        'negative complete pricing amount' => function (array &$scorecard): void {
+            $scorecard['trials'][0]['results'][0]['measurements'][0]['pricing']['snapshot']['cost']['amount'] = '-0.001';
+        },
+        'invalid complete pricing currency' => function (array &$scorecard): void {
+            $scorecard['trials'][0]['results'][0]['measurements'][0]['pricing']['snapshot']['cost']['currency'] = 'US';
+        },
+        'non-finite aggregate target latency' => function (array &$scorecard): void {
+            $measurement = $scorecard['trials'][0]['results'][0]['measurements'][0];
+            $measurement['latency_ms'] = PHP_FLOAT_MAX;
+            $scorecard['trials'][0]['results'][0]['measurements'][0]['latency_ms'] = PHP_FLOAT_MAX;
+            $measurement['fingerprint'] = 'sha256:measurement-two';
+            $scorecard['trials'][0]['results'][0]['measurements'][] = $measurement;
         },
         'invalid measurement mode' => function (array &$scorecard): void {
             $scorecard['trials'][0]['results'][0]['measurements'][0]['mode'] = 'replayed';

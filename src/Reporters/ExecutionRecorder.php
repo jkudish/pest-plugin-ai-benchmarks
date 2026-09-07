@@ -264,7 +264,7 @@ final class ExecutionRecorder
             identity: $identity,
             latencyMs: $latencyMs,
             passed: $passed,
-            output: self::jsonSafe($output ?? self::scorerOutput($scorerObservations)),
+            output: $output ?? self::scorerOutput($scorerObservations),
             observations: $observations,
             pricingQuotes: $pricingQuotes,
             scorerObservations: $scorerObservations,
@@ -308,7 +308,7 @@ final class ExecutionRecorder
             identity: new ModelIdentityEvidence(null, null, null, null),
             latencyMs: 0.0,
             passed: true,
-            output: self::jsonSafe($output),
+            output: $output,
             stableResults: self::stableRecords($results, 'Completed trial contains invalid result evidence.'),
         );
     }
@@ -348,7 +348,7 @@ final class ExecutionRecorder
             identity: new ModelIdentityEvidence(null, null, null, null),
             latencyMs: 0.0,
             passed: $passed,
-            output: self::jsonSafe($output),
+            output: $output,
             observations: $judgeObservations,
             pricingQuotes: array_map(self::quote(...), $judgeObservations),
             scorerObservations: $scorerObservations,

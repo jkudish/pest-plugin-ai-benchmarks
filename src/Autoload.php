@@ -194,7 +194,8 @@ if (! function_exists('benchmark')) {
                 return (new BenchmarkExecutor)->run(
                     $configuration,
                     function (ModelIdentityEvidence $identity) use ($caseArguments, $caseId, $configuration, $configurationName, $declaration, $description, $evaluationIdentity, $fingerprint, $repeat, $targetIdentity, $test): mixed {
-                        $startedAt = hrtime(true);
+                        $targetStartedAt = hrtime(true);
+                        $targetLatencyMs = 0.0;
                         $output = null;
                         $passed = false;
                         $observations = [];
@@ -202,7 +203,11 @@ if (! function_exists('benchmark')) {
                         RuntimeScorerCollector::begin();
 
                         try {
-                            $output = BenchmarkClosureInvoker::invoke($test, $this, ...$caseArguments);
+                            try {
+                                $output = BenchmarkClosureInvoker::invoke($test, $this, ...$caseArguments);
+                            } finally {
+                                $targetLatencyMs = (hrtime(true) - $targetStartedAt) / 1_000_000;
+                            }
 
                             $observations = RuntimeObservationCollector::finish();
                             RuntimeObservationCollector::begin(Component::Judge);
@@ -226,7 +231,7 @@ if (! function_exists('benchmark')) {
                                 configurationName: $configurationName,
                                 configuration: $configuration,
                                 identity: $identity,
-                                latencyMs: (hrtime(true) - $startedAt) / 1_000_000,
+                                latencyMs: $targetLatencyMs,
                                 passed: $passed,
                                 output: $output,
                                 context: $declaration->context,

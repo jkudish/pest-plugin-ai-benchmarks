@@ -38,7 +38,7 @@ final readonly class ReplayPayload
         }
 
         try {
-            json_encode($normalized, JSON_THROW_ON_ERROR);
+            json_encode($normalized, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
         } catch (JsonException $exception) {
             throw new InvalidArgumentException('Replay outputs must be JSON-safe.', previous: $exception);
         }
@@ -60,7 +60,7 @@ final readonly class ReplayPayload
     {
         return json_encode(
             $this->toArray(),
-            JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+            JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
         )."\n";
     }
 
