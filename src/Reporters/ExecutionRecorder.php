@@ -231,6 +231,7 @@ final class ExecutionRecorder
         ?string $fingerprint = null,
         ?BenchmarkDeclaration $declaration = null,
         ?array $evaluationIdentity = null,
+        bool $targetReturned = true,
     ): void {
         $fingerprint ??= self::trialFingerprint(
             $benchmark,
@@ -264,7 +265,7 @@ final class ExecutionRecorder
             identity: $identity,
             latencyMs: $latencyMs,
             passed: $passed,
-            output: $output ?? self::scorerOutput($scorerObservations),
+            output: $targetReturned ? $output : self::scorerOutput($scorerObservations),
             observations: $observations,
             pricingQuotes: $pricingQuotes,
             scorerObservations: $scorerObservations,

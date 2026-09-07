@@ -196,6 +196,7 @@ if (! function_exists('benchmark')) {
                     function (ModelIdentityEvidence $identity) use ($caseArguments, $caseId, $configuration, $configurationName, $declaration, $description, $evaluationIdentity, $fingerprint, $repeat, $targetIdentity, $test): mixed {
                         $targetStartedAt = hrtime(true);
                         $targetLatencyMs = 0.0;
+                        $targetReturned = false;
                         $output = null;
                         $passed = false;
                         $observations = [];
@@ -205,6 +206,7 @@ if (! function_exists('benchmark')) {
                         try {
                             try {
                                 $output = BenchmarkClosureInvoker::invoke($test, $this, ...$caseArguments);
+                                $targetReturned = true;
                             } finally {
                                 $targetLatencyMs = (hrtime(true) - $targetStartedAt) / 1_000_000;
                             }
@@ -242,6 +244,7 @@ if (! function_exists('benchmark')) {
                                 fingerprint: $fingerprint,
                                 declaration: $declaration,
                                 evaluationIdentity: $evaluationIdentity,
+                                targetReturned: $targetReturned,
                             );
                         }
 

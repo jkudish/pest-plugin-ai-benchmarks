@@ -173,6 +173,36 @@ it('preserves isolated target and judge retry evidence through live replay and r
     }
 });
 
+it('preserves successful null output despite scorer evidence through live replay and resume', function (): void {
+    $source = runLifecycleFixture('NullableOutputBenchmark.php');
+    $runs = [
+        'live' => $source,
+        'replay' => runLifecycleFixture(
+            'NullableOutputBenchmark.php',
+            ["--benchmark-replay={$source['run_id']}"],
+        ),
+        'resume' => runLifecycleFixture(
+            'NullableOutputBenchmark.php',
+            ["--benchmark-resume={$source['run_id']}"],
+        ),
+    ];
+
+    foreach ($runs as $mode => $run) {
+        $replay = json_decode(
+            (string) file_get_contents(dirname($run['scorecard']).'/replay.private.json'),
+            true,
+            flags: JSON_THROW_ON_ERROR,
+        );
+        $scorecard = json_decode((string) file_get_contents($run['scorecard']), true, flags: JSON_THROW_ON_ERROR);
+
+        expect($run['process']->isSuccessful())->toBeTrue()
+            ->and($replay['trials'][0])->toHaveKey('output')
+            ->and($replay['trials'][0]['output'])->toBeNull($mode)
+            ->and(array_column($scorecard['trials'][0]['results'], 'scorer'))
+            ->toContain('nullable-derived-status');
+    }
+});
+
 it('cleans observation state after a failing evaluation before another benchmark', function (): void {
     $root = dirname(__DIR__, 2);
     $before = lifecycleWiringRuns($root);
