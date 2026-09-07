@@ -33,7 +33,7 @@
     ],
     "require": {
         "php": "^8.4",
-        "illuminate/contracts": "^12.0||^13.0",
+        "illuminate/contracts": "^13.0",
         "jkudish/laravel-ai-pricing": "^0.1.0",
         "pestphp/pest": "^5.0.3",
         "pestphp/pest-plugin-evals": "^5.0.2",
@@ -44,9 +44,8 @@
         "laravel/ai": "^0.11.2",
         "laravel/pint": "^1.14",
         "nunomaduro/collision": "^8.8||^9.0",
-        "orchestra/testbench": "^10.0||^11.0",
+        "orchestra/testbench": "^11.0",
         "pestphp/pest-plugin-arch": "^5.0",
-        "pestphp/pest-plugin-laravel": "^5.0",
         "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan-deprecation-rules": "^2.0",
         "phpstan/phpstan-phpunit": "^2.0"
@@ -97,14 +96,5 @@
         }
     },
     "minimum-stability": "dev",
-    "prefer-stable": true,
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../laravel-ai-pricing",
-            "options": {
-                "symlink": true
-            }
-        }
-    ]
+    "prefer-stable": true
 }

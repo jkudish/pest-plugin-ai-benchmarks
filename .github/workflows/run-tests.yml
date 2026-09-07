@@ -42,14 +42,6 @@ jobs:
           path: pest-plugin-ai-benchmarks
           persist-credentials: false
 
-      - name: Checkout pricing package
-        uses: actions/checkout@v7
-        with:
-          repository: jkudish/laravel-ai-pricing
-          ref: v0.1.0
-          path: laravel-ai-pricing
-          persist-credentials: false
-
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -76,3 +68,45 @@ jobs:
       - name: Execute tests
         working-directory: pest-plugin-ai-benchmarks
         run: vendor/bin/pest --ci
+
+  laravel-13-consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      COMPOSER_AUTH: '{}'
+
+    steps:
+      - name: Checkout package
+        uses: actions/checkout@v7
+        with:
+          path: pest-plugin-ai-benchmarks
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          coverage: none
+
+      - name: Create a clean Laravel 13 consumer
+        run: composer create-project laravel/laravel:^13 consumer --no-interaction --prefer-dist
+
+      - name: Install the package and public dependencies
+        working-directory: consumer
+        run: |
+          composer remove phpunit/phpunit --dev --no-interaction --no-update
+          composer config repositories.benchmark '{"type":"path","url":"../pest-plugin-ai-benchmarks","options":{"symlink":false}}'
+          composer require --dev jkudish/pest-plugin-ai-benchmarks:@dev --with-all-dependencies --prefer-dist --no-interaction
+
+      - name: Verify discovery, plugin loading, and Packagist pricing installation
+        working-directory: consumer
+        shell: bash
+        run: |
+          php artisan package:discover --ansi
+          pricing_path=$(composer show jkudish/laravel-ai-pricing --path | awk '{print $NF}')
+          case "$pricing_path" in
+            "$PWD"/vendor/*) ;;
+            *) echo "Laravel AI Pricing resolved outside consumer vendor: $pricing_path" >&2; exit 1 ;;
+          esac
+          php -r 'require "vendor/autoload.php"; if (! function_exists("benchmark")) { fwrite(STDERR, "benchmark() was not autoloaded\n"); exit(1); } $packages = require "bootstrap/cache/packages.php"; $providers = $packages["jkudish/pest-plugin-ai-benchmarks"]["providers"] ?? []; if (! in_array(Jkudish\PestAiBenchmarks\PestAiBenchmarksServiceProvider::class, $providers, true)) { fwrite(STDERR, "Package provider was not discovered\n"); exit(1); }'
+          ./vendor/bin/pest --ci tests/Unit/ExampleTest.php
