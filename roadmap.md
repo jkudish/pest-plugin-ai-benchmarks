@@ -15,7 +15,7 @@ Pest AI Benchmarks extends Pest's existing vocabulary with comparative configura
 - [x] Replace development branch dependencies with tagged constraints.
 - [x] Verify a clean source checkout installs from public package sources without sibling repositories.
 - [x] Publish `v0.1.0` to GitHub and Packagist.
-- [ ] Verify installation in a clean consumer from the published package.
+- [x] Verify installation in a clean consumer from the published package.
 
 Laravel AI's current public response objects do not expose authoritative provider-reported monetary cost. Benchmark measurements use the shared pricing package's configured and public catalog resolution until Laravel AI surfaces that value.
 
