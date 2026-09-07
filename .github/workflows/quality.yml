@@ -16,14 +16,6 @@ jobs:
           path: pest-plugin-ai-benchmarks
           persist-credentials: false
 
-      - name: Checkout pricing package
-        uses: actions/checkout@v7
-        with:
-          repository: jkudish/laravel-ai-pricing
-          ref: v0.1.0
-          path: laravel-ai-pricing
-          persist-credentials: false
-
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.5'

@@ -14,11 +14,9 @@ Pest AI Benchmarks preserves Pest's datasets, expectations, repetitions, filteri
 
 It builds on [Pest Evals](https://github.com/pestphp/pest-plugin-evals) for scoring and [Laravel AI Pricing](https://github.com/jkudish/laravel-ai-pricing) for cost attribution. It does not introduce competing scorer, judge, case, candidate, or sampling APIs.
 
-> **Pre-release:** version 0.1 is feature-complete but has not yet been published.
-
 ## Installation
 
-Once version 0.1 is published:
+Install the package as a development dependency:
 
 ```bash
 composer require --dev jkudish/pest-plugin-ai-benchmarks
@@ -216,11 +214,11 @@ Benchmark evals deliberately run serially. Combining `--evals` with `--parallel`
 ## Requirements
 
 - PHP 8.4 or newer.
-- Laravel 13 for the standard Pest Laravel integration.
+- Laravel 13.23 or newer.
 - Pest 5.
 - Pest Evals 5.0.2 or newer.
 
-The package keeps Illuminate 12-compatible contracts for custom bootstraps. Pest Laravel 5 currently requires Laravel 13.23 or newer, so the conventional Laravel 12 integration is outside the version 0.1 support matrix.
+Pest 5 requires Symfony Process 8.1, while Laravel 12 requires Symfony Process 7.x. Those upstream constraints cannot be installed together, so Laravel 12 is not supported by version 0.1.
 
 ## Stability
 

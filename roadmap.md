@@ -13,8 +13,9 @@ Pest AI Benchmarks extends Pest's existing vocabulary with comparative configura
 - [x] Pass-rate, latency, and cost regression policies.
 - [x] Record explicit scorer results through Pest Evals' public scorer contract.
 - [x] Replace development branch dependencies with tagged constraints.
-- [ ] Publish `v0.1.0` to GitHub and Packagist.
-- [ ] Verify installation in a clean consumer without sibling path repositories.
+- [x] Verify a clean source checkout installs from public package sources without sibling repositories.
+- [x] Publish `v0.1.0` to GitHub and Packagist.
+- [ ] Verify installation in a clean consumer from the published package.
 
 Laravel AI's current public response objects do not expose authoritative provider-reported monetary cost. Benchmark measurements use the shared pricing package's configured and public catalog resolution until Laravel AI surfaces that value.
 
@@ -30,6 +31,7 @@ Add safe commands to list, inspect, promote, prune, and validate saved runs and 
 
 ## Deferred until a concrete need
 
+- Laravel 12 support, which requires a compatible Pest and Pest Evals dependency stack.
 - Reporter and exporter extension contracts.
 - Schema migration tooling beyond explicit versioned schemas.
 - Additional live observation adapters.

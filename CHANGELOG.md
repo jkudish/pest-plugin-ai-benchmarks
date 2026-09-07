@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-07
+
 ### Added
 
 - Pest-native `benchmark()` declarations with datasets, repetitions, filtering, groups, and dependencies.
@@ -21,5 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pass-rate, median-latency, and average-cost comparison policies.
 - Explicit rejection of unsupported parallel benchmark execution.
 - Benchmark-owned `toPassBenchmarkScorer()` evidence capture using Pest Evals' public scorer contract.
+- Contributor and CI installation through public package sources without sibling path repositories.
 
-[Unreleased]: https://github.com/jkudish/pest-plugin-ai-benchmarks/commits/main
+### Changed
+
+- Declared Laravel 13.23 as the supported framework line because Pest 5's Symfony Process requirement is incompatible with Laravel 12.
+
+[Unreleased]: https://github.com/jkudish/pest-plugin-ai-benchmarks/compare/v0.1.0...main
+[0.1.0]: https://github.com/jkudish/pest-plugin-ai-benchmarks/releases/tag/v0.1.0

@@ -11,20 +11,13 @@ Thanks for considering a contribution to Pest AI Benchmarks.
 
 ## Development setup
 
-The repository currently develops alongside `laravel-ai-pricing`:
-
-```text
-workspace/
-├── laravel-ai-pricing/
-└── pest-plugin-ai-benchmarks/
-```
-
 ```bash
-git clone --branch v0.1.0 https://github.com/jkudish/laravel-ai-pricing.git
 git clone https://github.com/jkudish/pest-plugin-ai-benchmarks.git
 cd pest-plugin-ai-benchmarks
 composer install
 ```
+
+Composer installs the tagged Laravel AI Pricing dependency and all other dependencies from public package sources. No sibling repository or custom Composer authentication is required.
 
 Run the complete local verification suite:
 
