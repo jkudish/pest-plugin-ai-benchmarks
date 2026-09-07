@@ -106,7 +106,7 @@ it('rejects unsafe explicit run IDs', function (string $id): void {
     expect(fn (): RunId => new RunId($id))->toThrow(InvalidArgumentException::class);
 })->with(['../escape', '/absolute', 'nested/path', '', '..']);
 
-it('publishes a sanitized scorecard and private replay as one run bundle', function (): void {
+it('publishes sanitized stable evidence and exact private replay as one run bundle', function (): void {
     $paths = lifecyclePaths();
     $runId = new RunId('run-001');
 
@@ -120,8 +120,8 @@ it('publishes a sanitized scorecard and private replay as one run bundle', funct
         ->and($private)->toBeString()
         ->and(str_contains((string) $stable, 'private model output'))->toBeFalse()
         ->and(str_contains((string) $private, 'private model output'))->toBeTrue()
-        ->and(str_contains((string) $private, 'Bearer secret'))->toBeFalse()
-        ->and(str_contains((string) $private, '[REDACTED]'))->toBeTrue();
+        ->and(str_contains((string) $private, 'Bearer secret'))->toBeTrue()
+        ->and(str_contains((string) $private, '[REDACTED]'))->toBeFalse();
 
     if (DIRECTORY_SEPARATOR === '/') {
         expect(fileperms($run.'/'.RunBundle::REPLAY_FILE) & 0777)->toBe(0600);
@@ -141,7 +141,7 @@ it('exposes stored outputs only through the replay callback', function (): void 
 
     expect($received)->toBe([[
         'trialId' => 'trial_01JRUNTRIAL',
-        'output' => ['text' => 'private model output', 'authorization' => '[REDACTED]'],
+        'output' => ['text' => 'private model output', 'authorization' => 'Bearer secret'],
         'fingerprint' => 'sha256:trial-one',
     ]]);
 });
@@ -168,10 +168,63 @@ it('resumes completed trials only when fingerprints match', function (): void {
 
     expect($matched)->toBeTrue()
         ->and($reused['trial'])->toMatchArray(['case_id' => 'case-1', 'fingerprint' => 'sha256:trial-one'])
-        ->and($reused['output'])->toBe(['text' => 'private model output', 'authorization' => '[REDACTED]'])
+        ->and($reused['output'])->toBe(['text' => 'private model output', 'authorization' => 'Bearer secret'])
         ->and($resume->reuseCompletedTrial($runId, 'run lifecycle', 'missing', 'production', 1, 'sha256:trial-one', fn (): null => null))->toBeFalse()
         ->and(fn () => $resume->reuseCompletedTrial($runId, 'run lifecycle', 'case-1', 'production', 1, 'sha256:changed', fn (): null => null))
         ->toThrow(RuntimeException::class, 'fingerprint');
+});
+
+it('preserves exact JSON-safe private replay output without stable evidence sanitization', function (): void {
+    $output = [
+        'password' => 'correct horse battery staple',
+        'access_token' => 'token-value',
+        'around_boundary' => str_repeat('a', 1_048_575),
+        'over_boundary' => str_repeat('b', 1_048_577),
+    ];
+    $payload = new ReplayPayload([
+        [
+            'trial_id' => 'trial_01JRUNTRIAL',
+            'fingerprint' => 'sha256:trial-one',
+            'output' => $output,
+        ],
+    ]);
+
+    expect($payload->toArray()['trials'][0]['output'])->toBe($output)
+        ->and(json_decode($payload->toJson(), true, flags: JSON_THROW_ON_ERROR)['trials'][0]['output'])->toBe($output);
+});
+
+it('rejects non-JSON-safe and non-finite private replay output', function (mixed $output): void {
+    expect(fn () => new ReplayPayload([
+        [
+            'trial_id' => 'trial_01JRUNTRIAL',
+            'fingerprint' => 'sha256:trial-one',
+            'output' => $output,
+        ],
+    ]))->toThrow(InvalidArgumentException::class);
+})->with([
+    'infinity' => INF,
+    'not a number' => NAN,
+    'object' => new stdClass,
+]);
+
+it('rejects resource private replay output', function (): void {
+    $resource = fopen('php://memory', 'r');
+
+    if ($resource === false) {
+        throw new RuntimeException('Unable to create a test resource.');
+    }
+
+    try {
+        expect(fn () => new ReplayPayload([
+            [
+                'trial_id' => 'trial_01JRUNTRIAL',
+                'fingerprint' => 'sha256:trial-one',
+                'output' => $resource,
+            ],
+        ]))->toThrow(InvalidArgumentException::class);
+    } finally {
+        fclose($resource);
+    }
 });
 
 it('rejects replay reuse when private and stable fingerprints disagree', function (): void {
@@ -262,6 +315,53 @@ it('promotes a saved live run without copying private replay output', function (
         ->not->toContain('private scorer reasoning')
         ->and($baselineData)->not->toHaveKey('context')
         ->and($baselineData['trials'][0]['results'][0]['reasoning'])->toBeNull();
+});
+
+it('rejects malformed promotion candidates before replacing an existing baseline', function (): void {
+    $paths = lifecyclePaths();
+    $store = new BaselineStore($paths);
+    $store->save('production', lifecycleScorecard());
+    $before = file_get_contents($paths->baseline('production'));
+
+    $mutations = [
+        'wrong schema version' => function (array &$scorecard): void {
+            $scorecard['schema_version'] = '0.0.0';
+        },
+        'empty trials' => function (array &$scorecard): void {
+            $scorecard['trials'] = [];
+        },
+        'malformed nested evidence' => function (array &$scorecard): void {
+            $scorecard['trials'][0]['results'] = [[]];
+        },
+        'missing identity' => function (array &$scorecard): void {
+            unset($scorecard['trials'][0]['results'][0]['source']['trial_id']);
+        },
+        'missing fingerprint' => function (array &$scorecard): void {
+            unset($scorecard['trials'][0]['results'][0]['measurements'][0]['fingerprint']);
+        },
+        'invalid measurement structure' => function (array &$scorecard): void {
+            $scorecard['trials'][0]['results'][0]['measurements'][0]['usage'] = ['not-an-object'];
+        },
+        'invalid pricing structure' => function (array &$scorecard): void {
+            unset($scorecard['trials'][0]['results'][0]['measurements'][0]['pricing']['snapshot']);
+        },
+        'invalid measurement mode' => function (array &$scorecard): void {
+            $scorecard['trials'][0]['results'][0]['measurements'][0]['mode'] = 'replayed';
+        },
+    ];
+
+    foreach ($mutations as $label => $mutate) {
+        $runId = new RunId('run-invalid-'.str_replace(' ', '-', $label));
+        (new RunBundle($paths, $runId))->write(lifecycleScorecard(), lifecycleReplay());
+        $scorecardPath = $paths->run($runId).'/'.RunBundle::SCORECARD_FILE;
+        $scorecard = json_decode((string) file_get_contents($scorecardPath), true, flags: JSON_THROW_ON_ERROR);
+        $mutate($scorecard);
+        file_put_contents($scorecardPath, json_encode($scorecard, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
+
+        expect(fn () => $store->promote($runId, 'production'))
+            ->toThrow(RuntimeException::class)
+            ->and(file_get_contents($paths->baseline('production')))->toBe($before, $label);
+    }
 });
 
 it('rejects promotion of a saved simulated run', function (): void {

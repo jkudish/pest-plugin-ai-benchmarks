@@ -27,6 +27,7 @@ final readonly class BaselineStore
     /** @param array<string, mixed> $stableScorecard */
     private function write(string $name, array $stableScorecard): void
     {
+        StableScorecardValidator::assert($stableScorecard);
         $baseline = $this->baselineEvidence($stableScorecard);
         $this->assertPromotable($baseline);
         $json = json_encode(
@@ -143,6 +144,7 @@ final readonly class BaselineStore
     /** @param array<string, mixed> $scorecard */
     public function assertPromotable(array $scorecard): void
     {
+        StableScorecardValidator::assert($scorecard);
         $trials = $scorecard['trials'] ?? null;
 
         if (! is_array($trials)) {
