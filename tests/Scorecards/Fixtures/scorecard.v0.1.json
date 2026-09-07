@@ -30,7 +30,7 @@
                     },
                     "scorer": "receipt-fields",
                     "score": 0.95,
-                    "reasoning": "All required fields matched.",
+                    "reasoning": null,
                     "threshold": 0.9,
                     "passed": true,
                     "sample": 1,

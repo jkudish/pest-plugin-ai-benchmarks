@@ -171,6 +171,54 @@ it('applies named configurations and emits a durable run bundle in eval mode', f
     ]);
 });
 
+it('keeps legitimate Configuration datasets while hiding only the configuration axis', function (): void {
+    $root = dirname(__DIR__, 2);
+    $before = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
+    $process = new Process([
+        PHP_BINARY,
+        $root.'/vendor/bin/pest',
+        __DIR__.'/Fixtures/ConfigurationDatasetBenchmark.php',
+        '--evals',
+        '--ci',
+    ], $root);
+
+    $process->mustRun();
+
+    $after = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
+    $created = array_values(array_diff($after, $before));
+
+    expect($created)->toHaveCount(3);
+
+    $scorecards = [];
+    $replayOutputs = [];
+
+    foreach ($created as $scorecardPath) {
+        $scorecard = json_decode((string) file_get_contents($scorecardPath), true, flags: JSON_THROW_ON_ERROR);
+        $benchmark = $scorecard['benchmark'] ?? null;
+        $scorecards[$benchmark] = $scorecard;
+        $replay = json_decode((string) file_get_contents(dirname($scorecardPath).'/replay.private.json'), true, flags: JSON_THROW_ON_ERROR);
+        $replayOutputs[$benchmark] = array_map(
+            static fn (array $trial): mixed => $trial['output'] ?? null,
+            $replay['trials'] ?? [],
+        );
+    }
+
+    expect($scorecards['preserves a legitimate Configuration dataset without an axis']['trials'] ?? null)
+        ->toHaveCount(2)
+        ->and($replayOutputs['preserves a legitimate Configuration dataset without an axis'] ?? null)
+        ->toEqualCanonicalizing(['first|dataset/first', 'second|dataset/second'])
+        ->and($scorecards['preserves Configuration datasets with dataset then configuration chaining']['trials'] ?? null)
+        ->toHaveCount(4)
+        ->and($replayOutputs['preserves Configuration datasets with dataset then configuration chaining'] ?? null)
+        ->each->toMatch('/^(first|second)\|dataset\/(first|second)\|dependency\/model$/')
+        ->and($scorecards['preserves Configuration datasets with configuration then dataset chaining']['trials'] ?? null)
+        ->toHaveCount(8);
+
+    $repeated = $scorecards['preserves Configuration datasets with configuration then dataset chaining']['trials'] ?? [];
+    expect(collect($repeated)->pluck('repeat')->sort()->values()->all())
+        ->toBe([1, 1, 1, 1, 2, 2, 2, 2]);
+});
+
 it('records Pest repetitions under stable case identities', function (): void {
     $root = dirname(__DIR__, 2);
     $before = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
@@ -230,7 +278,7 @@ it('captures native Pest scorer results through the benchmark expectation', func
     expect($results)->toHaveCount(2)
         ->and($scored)->toBeArray()
         ->and($scored['score'] ?? null)->toBe(0.96)
-        ->and($scored['reasoning'] ?? null)->toBe('The expected merchant and account matched.')
+        ->and($scored['reasoning'] ?? null)->toBeNull()
         ->and($scored['threshold'] ?? null)->toBe(0.9)
         ->and($scored['passed'] ?? null)->toBeTrue()
         ->and($scored['sample'] ?? null)->toBe(1)
@@ -268,9 +316,11 @@ it('retains failed scorer output privately while sanitizing stable evidence', fu
         ->and($scored['score'] ?? null)->toBe(0.2)
         ->and($scored['threshold'] ?? null)->toBe(0.9)
         ->and($scored['passed'] ?? null)->toBeFalse()
-        ->and($scored['reasoning'] ?? null)->not->toContain('private-token')
+        ->and($scored['reasoning'] ?? null)->toBeNull()
         ->and($scorecardJson)->not->toContain('Private Merchant')
         ->and($scorecardJson)->not->toContain('Expected Merchant')
+        ->and($scorecardJson)->not->toContain('customer@example.test')
+        ->and($scorecardJson)->not->toContain('password=')
         ->and($replay['trials'][0]['output'] ?? null)->toBe('{"merchant":"Private Merchant","account":"000"}');
 });
 

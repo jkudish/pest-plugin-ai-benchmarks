@@ -58,7 +58,10 @@ final class BenchmarkCall
             }
         }
 
-        $this->testCall->with($configurations);
+        $this->testCall->with(array_map(
+            static fn (Configuration $configuration): ConfigurationDatasetValue => new ConfigurationDatasetValue($configuration),
+            $configurations,
+        ));
         $this->hasConfigurations = true;
         /** @var array<string, Configuration> $configurations */
         DeclarationRegistry::setConfigurations($this, $configurations);

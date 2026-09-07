@@ -7,6 +7,7 @@ namespace Jkudish\PestAiBenchmarks\Runs;
 use Jkudish\PestAiBenchmarks\Scorecards\Scorecard;
 use JsonException;
 use RuntimeException;
+use stdClass;
 
 /** @internal */
 final readonly class BaselineStore
@@ -27,6 +28,7 @@ final readonly class BaselineStore
     /** @param array<string, mixed> $stableScorecard */
     private function write(string $name, array $stableScorecard): void
     {
+        StableScorecardValidator::assert($stableScorecard);
         $baseline = $this->baselineEvidence($stableScorecard);
         $this->assertPromotable($baseline);
         $json = json_encode(
@@ -82,6 +84,31 @@ final readonly class BaselineStore
             foreach ($results as $resultIndex => $result) {
                 if (is_array($result)) {
                     $result['reasoning'] = null;
+                    $measurements = $result['measurements'] ?? null;
+
+                    if (is_array($measurements)) {
+                        foreach ($measurements as $measurementIndex => $measurement) {
+                            if (! is_array($measurement)) {
+                                continue;
+                            }
+
+                            if (($measurement['usage'] ?? null) === []) {
+                                $measurement['usage'] = new stdClass;
+                            }
+
+                            $pricing = $measurement['pricing'] ?? null;
+
+                            if (is_array($pricing) && ($pricing['snapshot'] ?? null) === []) {
+                                $pricing['snapshot'] = new stdClass;
+                                $measurement['pricing'] = $pricing;
+                            }
+
+                            $measurements[$measurementIndex] = $measurement;
+                        }
+
+                        $result['measurements'] = $measurements;
+                    }
+
                     $results[$resultIndex] = $result;
                 }
             }
@@ -143,6 +170,7 @@ final readonly class BaselineStore
     /** @param array<string, mixed> $scorecard */
     public function assertPromotable(array $scorecard): void
     {
+        StableScorecardValidator::assert($scorecard);
         $trials = $scorecard['trials'] ?? null;
 
         if (! is_array($trials)) {

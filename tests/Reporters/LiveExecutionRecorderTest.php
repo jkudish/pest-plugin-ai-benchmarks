@@ -8,12 +8,37 @@ use Jkudish\LaravelAiPricing\Enums\PricingSource;
 use Jkudish\LaravelAiPricing\ValueObjects\CostQuote;
 use Jkudish\LaravelAiPricing\ValueObjects\Money;
 use Jkudish\LaravelAiPricing\ValueObjects\PricingObservation;
+use Jkudish\PestAiBenchmarks\Comparisons\ScorecardEvidence;
 use Jkudish\PestAiBenchmarks\Configuration;
 use Jkudish\PestAiBenchmarks\LaravelAi\AgentObservation;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
 use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
+use Jkudish\PestAiBenchmarks\Runs\RunBundle;
+use Jkudish\PestAiBenchmarks\Scorecards\Component;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
+use Pest\TestSuite;
+
+function recordPrivateOutput(mixed $output): void
+{
+    ExecutionRecorder::record(
+        benchmark: 'private output fidelity',
+        caseId: 'output-1',
+        configurationName: 'candidate',
+        configuration: Configuration::model('openrouter', 'router/requested'),
+        identity: new ModelIdentityEvidence('openrouter', 'router/requested', 'openrouter', 'router/requested'),
+        latencyMs: 1,
+        passed: true,
+        output: $output,
+        context: null,
+        targetIdentity: [
+            'file' => 'tests/Evals/Output.php',
+            'start_line' => 10,
+            'end_line' => 20,
+            'source_sha256' => str_repeat('e', 64),
+        ],
+    );
+}
 
 beforeEach(function (): void {
     ExecutionRecorder::reset();
@@ -170,6 +195,67 @@ it('keeps fake-gateway observations simulated and unpriced', function (): void {
         ->and($measurement['pricing']['completeness'])->toBe('unavailable');
 });
 
+it('keeps judge observations out of target retry accounting', function (): void {
+    ExecutionRecorder::record(
+        benchmark: 'target and judge evidence',
+        caseId: 'receipt-judge',
+        configurationName: 'candidate',
+        configuration: Configuration::model('openrouter', 'router/requested'),
+        identity: new ModelIdentityEvidence('openrouter', 'router/requested', 'openrouter', 'router/requested'),
+        latencyMs: 30,
+        passed: true,
+        output: ['merchant' => 'Acme'],
+        context: null,
+        targetIdentity: [
+            'file' => 'tests/Evals/Receipt.php',
+            'start_line' => 10,
+            'end_line' => 20,
+            'source_sha256' => str_repeat('d', 64),
+        ],
+        observations: [
+            new AgentObservation(
+                requestedProvider: 'openrouter',
+                requestedModel: 'router/requested',
+                effectiveProvider: null,
+                effectiveModel: null,
+                usage: new NormalizedUsage,
+                latencyMs: 10,
+                succeeded: false,
+                component: Component::Target,
+            ),
+            new AgentObservation(
+                requestedProvider: 'openrouter',
+                requestedModel: 'router/fallback',
+                effectiveProvider: 'openrouter',
+                effectiveModel: 'router/fallback',
+                usage: new NormalizedUsage(inputTokens: 10, outputTokens: 2),
+                latencyMs: 15,
+                succeeded: true,
+                component: Component::Target,
+            ),
+            new AgentObservation(
+                requestedProvider: 'openai',
+                requestedModel: 'judge/model',
+                effectiveProvider: 'openai',
+                effectiveModel: 'judge/model',
+                usage: new NormalizedUsage(inputTokens: 20, outputTokens: 4),
+                latencyMs: 5,
+                succeeded: true,
+                component: Component::Judge,
+            ),
+        ],
+    );
+
+    $scorecard = ExecutionRecorder::flush()[0]->toArray();
+    $measurements = $scorecard['trials'][0]['results'][0]['measurements'];
+    $aggregate = (new ScorecardEvidence)->aggregate($scorecard, 'candidate');
+
+    expect(array_column($measurements, 'component'))->toBe(['target', 'target', 'judge'])
+        ->and(array_column($measurements, 'retries'))->toBe([0, 1, 0])
+        ->and(array_unique(array_column($measurements, 'fingerprint')))->toHaveCount(3)
+        ->and($aggregate->medianLatency)->toBe(25.0);
+});
+
 it('keeps pre-execution trial fingerprints stable while measurement fingerprints retain runtime identity', function (): void {
     foreach (['effective-a', 'effective-b'] as $effectiveModel) {
         ExecutionRecorder::record(
@@ -208,4 +294,50 @@ it('keeps pre-execution trial fingerprints stable while measurement fingerprints
         ->and($trials[0]['fingerprint'])->toBe($trials[1]['fingerprint'])
         ->and($trials[0]['results'][0]['measurements'][0]['fingerprint'])
         ->not->toBe($trials[1]['results'][0]['measurements'][0]['fingerprint']);
+});
+
+it('preserves integral floats from live recording into private replay', function (): void {
+    $root = TestSuite::getInstance()->rootPath;
+    $pattern = $root.'/storage/app/ai-evals/runs/*/'.RunBundle::REPLAY_FILE;
+    $before = glob($pattern) ?: [];
+
+    recordPrivateOutput(['score' => 1.0]);
+    ExecutionRecorder::flush();
+
+    $after = glob($pattern) ?: [];
+    $created = array_values(array_diff($after, $before));
+    $replay = (string) file_get_contents($created[0]);
+    $decoded = json_decode($replay, true, flags: JSON_THROW_ON_ERROR);
+
+    expect($created)->toHaveCount(1)
+        ->and($replay)->toContain('"score": 1.0')
+        ->and($decoded['trials'][0]['output']['score'])->toBe(1.0)
+        ->and(is_float($decoded['trials'][0]['output']['score']))->toBeTrue();
+});
+
+it('rejects invalid live output before private replay persistence', function (mixed $output): void {
+    recordPrivateOutput($output);
+
+    expect(fn () => ExecutionRecorder::flush())
+        ->toThrow(InvalidArgumentException::class);
+})->with([
+    'infinity' => INF,
+    'object' => new stdClass,
+]);
+
+it('rejects live resource output before private replay persistence', function (): void {
+    $resource = fopen('php://memory', 'r');
+
+    if ($resource === false) {
+        throw new RuntimeException('Unable to create a test resource.');
+    }
+
+    try {
+        recordPrivateOutput($resource);
+
+        expect(fn () => ExecutionRecorder::flush())
+            ->toThrow(InvalidArgumentException::class, 'JSON-safe');
+    } finally {
+        fclose($resource);
+    }
 });

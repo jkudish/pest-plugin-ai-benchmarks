@@ -145,7 +145,7 @@ storage/app/ai-evals/runs/<run-id>/
 └── replay.private.json
 ```
 
-Stable scorecards are recursively sanitized and exclude prompts, outputs, expected values, and scorer inputs. Private replay data retains the output needed to rerun evaluation and must be protected as application data.
+Stable scorecards are recursively sanitized and exclude prompts, outputs, expected values, and scorer inputs. Private replay data retains the exact JSON-safe output needed to rerun evaluation, including sensitive-looking keys and long strings, and must be protected as application data.
 
 Requested and effective model identities are recorded separately. Scorecards use the bundled [JSON Schema 2020-12 contract](resources/schema/scorecard.schema.json).
 

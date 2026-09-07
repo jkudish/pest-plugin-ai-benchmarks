@@ -97,6 +97,151 @@ it('replays private output through evaluate without invoking the target', functi
         ->toThrow(RuntimeException::class, 'Simulated evidence cannot be promoted');
 });
 
+it('invokes static targets and evaluations consistently in live, replay, and resume', function (): void {
+    $targetCounter = tempnam(sys_get_temp_dir(), 'pest-ai-target-');
+    $evaluationCounter = tempnam(sys_get_temp_dir(), 'pest-ai-evaluate-');
+
+    expect($targetCounter)->toBeString()
+        ->and($evaluationCounter)->toBeString();
+
+    $environment = [
+        'BENCHMARK_TARGET_COUNTER' => $targetCounter,
+        'BENCHMARK_EVALUATION_COUNTER' => $evaluationCounter,
+    ];
+    $source = runLifecycleFixture('StaticClosureExecutionBenchmark.php', environment: $environment);
+
+    expect($source['process']->isSuccessful())->toBeTrue()
+        ->and(lifecycleCounter($targetCounter))->toBe(1)
+        ->and(lifecycleCounter($evaluationCounter))->toBe(1);
+
+    file_put_contents($targetCounter, '');
+    file_put_contents($evaluationCounter, '');
+    $replay = runLifecycleFixture(
+        'StaticClosureExecutionBenchmark.php',
+        ["--benchmark-replay={$source['run_id']}"],
+        $environment,
+    );
+
+    expect($replay['process']->isSuccessful())->toBeTrue()
+        ->and(lifecycleCounter($targetCounter))->toBe(0)
+        ->and(lifecycleCounter($evaluationCounter))->toBe(1);
+
+    file_put_contents($evaluationCounter, '');
+    $resume = runLifecycleFixture(
+        'StaticClosureExecutionBenchmark.php',
+        ["--benchmark-resume={$source['run_id']}"],
+        $environment,
+    );
+
+    expect($resume['process']->isSuccessful())->toBeTrue()
+        ->and(lifecycleCounter($targetCounter))->toBe(0)
+        ->and(lifecycleCounter($evaluationCounter))->toBe(1);
+});
+
+it('preserves isolated target and judge retry evidence through live replay and resume', function (): void {
+    $source = runLifecycleFixture('ObservedLifecycleBenchmark.php');
+    $sourceReplay = (string) file_get_contents(dirname($source['scorecard']).'/replay.private.json');
+
+    expect($source['process']->isSuccessful())->toBeTrue()
+        ->and($sourceReplay)->toContain('"score": 1.0');
+
+    $runs = [
+        'live' => $source,
+        'replay' => runLifecycleFixture(
+            'ObservedLifecycleBenchmark.php',
+            ["--benchmark-replay={$source['run_id']}"],
+        ),
+        'resume' => runLifecycleFixture(
+            'ObservedLifecycleBenchmark.php',
+            ["--benchmark-resume={$source['run_id']}"],
+        ),
+    ];
+
+    foreach ($runs as $mode => $run) {
+        $scorecard = json_decode((string) file_get_contents($run['scorecard']), true, flags: JSON_THROW_ON_ERROR);
+        $measurements = $scorecard['trials'][0]['results'][0]['measurements'];
+
+        expect($run['process']->isSuccessful())->toBeTrue()
+            ->and(array_column($measurements, 'component'))->toBe(['target', 'target', 'judge', 'judge'], $mode)
+            ->and(array_column($measurements, 'retries'))->toBe([0, 1, 0, 1], $mode)
+            ->and(array_unique(array_column($measurements, 'fingerprint')))->toHaveCount(4, $mode);
+
+        if ($mode !== 'live') {
+            expect(array_column(array_slice($measurements, 0, 2), 'mode'))->toBe(['recorded', 'recorded'], $mode)
+                ->and(array_column(array_slice($measurements, 2), 'mode'))->toBe(['live', 'live'], $mode);
+        }
+    }
+});
+
+it('preserves successful null output despite scorer evidence through live replay and resume', function (): void {
+    $source = runLifecycleFixture('NullableOutputBenchmark.php');
+    $runs = [
+        'live' => $source,
+        'replay' => runLifecycleFixture(
+            'NullableOutputBenchmark.php',
+            ["--benchmark-replay={$source['run_id']}"],
+        ),
+        'resume' => runLifecycleFixture(
+            'NullableOutputBenchmark.php',
+            ["--benchmark-resume={$source['run_id']}"],
+        ),
+    ];
+
+    foreach ($runs as $mode => $run) {
+        $replay = json_decode(
+            (string) file_get_contents(dirname($run['scorecard']).'/replay.private.json'),
+            true,
+            flags: JSON_THROW_ON_ERROR,
+        );
+        $scorecard = json_decode((string) file_get_contents($run['scorecard']), true, flags: JSON_THROW_ON_ERROR);
+
+        expect($run['process']->isSuccessful())->toBeTrue()
+            ->and($replay['trials'][0])->toHaveKey('output')
+            ->and($replay['trials'][0]['output'])->toBeNull($mode)
+            ->and(array_column($scorecard['trials'][0]['results'], 'scorer'))
+            ->toContain('nullable-derived-status');
+    }
+});
+
+it('cleans observation state after a failing evaluation before another benchmark', function (): void {
+    $root = dirname(__DIR__, 2);
+    $before = lifecycleWiringRuns($root);
+    $process = new Process([
+        PHP_BINARY,
+        $root.'/vendor/bin/pest',
+        __DIR__.'/Fixtures/CollectorIsolationBenchmark.php',
+        '--evals',
+        '--ci',
+        '--order-by=default',
+    ], $root);
+    $process->run();
+
+    $created = array_values(array_diff(lifecycleWiringRuns($root), $before));
+    $scorecards = [];
+
+    foreach ($created as $path) {
+        $scorecard = json_decode((string) file_get_contents($path), true, flags: JSON_THROW_ON_ERROR);
+        $scorecards[$scorecard['benchmark']] = $scorecard;
+    }
+
+    $failedMeasurements = $scorecards['fails after collecting target and judge evidence']['trials'][0]['results'][0]['measurements'];
+    $cleanMeasurements = $scorecards['starts with an isolated observation collector']['trials'][0]['results'][0]['measurements'];
+
+    expect($process->isSuccessful())->toBeFalse()
+        ->and($created)->toHaveCount(2)
+        ->and(array_column($failedMeasurements, 'component'))->toBe(['target', 'judge'])
+        ->and(array_column($failedMeasurements, 'requested_model'))->toBe([
+            ['provider' => 'fixture', 'model' => 'failed-target'],
+            ['provider' => 'fixture', 'model' => 'failed-judge'],
+        ])
+        ->and($scorecards['fails after collecting target and judge evidence']['trials'][0]['results'][0]['passed'])->toBeFalse()
+        ->and(array_column($cleanMeasurements, 'component'))->toBe(['target'])
+        ->and(array_column($cleanMeasurements, 'requested_model'))->toBe([
+            ['provider' => 'fixture', 'model' => 'clean-target'],
+        ])
+        ->and($scorecards['starts with an isolated observation collector']['trials'][0]['results'][0]['passed'])->toBeTrue();
+});
+
 it('records ordinary evaluate expectation failures truthfully in live and replay evidence', function (): void {
     $targetCounter = tempnam(sys_get_temp_dir(), 'pest-ai-target-');
 
@@ -286,6 +431,25 @@ it('rejects simulated saved runs through the public promotion API', function ():
         ->toThrow(RuntimeException::class, 'Simulated evidence cannot be promoted')
         ->and(is_file(dirname(__DIR__, 2).'/tests/Evals/Baselines/'.$baseline.'.json'))
         ->toBeFalse();
+});
+
+it('excludes evaluation duration from fallback target latency', function (): void {
+    $run = runLifecycleFixture('GatedExecutionBenchmark.php', environment: [
+        'BENCHMARK_GATE_THRESHOLD' => '0.1',
+        'BENCHMARK_TARGET_DELAY_US' => '0',
+        'BENCHMARK_EVALUATION_DELAY_US' => '500000',
+    ]);
+    $scorecard = json_decode((string) file_get_contents($run['scorecard']), true, flags: JSON_THROW_ON_ERROR);
+    $measurements = $scorecard['trials'][0]['results'][0]['measurements'];
+    $targetLatency = array_sum(array_map(
+        static fn (array $measurement): float => $measurement['component'] === 'target'
+            ? (float) $measurement['latency_ms']
+            : 0.0,
+        $measurements,
+    ));
+
+    expect($run['process']->isSuccessful())->toBeTrue()
+        ->and($targetLatency)->toBeLessThan(250.0);
 });
 
 it('returns a nonzero exit for failed and not-evaluable explicit historical gates', function (): void {

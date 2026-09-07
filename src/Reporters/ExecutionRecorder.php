@@ -231,6 +231,7 @@ final class ExecutionRecorder
         ?string $fingerprint = null,
         ?BenchmarkDeclaration $declaration = null,
         ?array $evaluationIdentity = null,
+        bool $targetReturned = true,
     ): void {
         $fingerprint ??= self::trialFingerprint(
             $benchmark,
@@ -264,7 +265,7 @@ final class ExecutionRecorder
             identity: $identity,
             latencyMs: $latencyMs,
             passed: $passed,
-            output: self::jsonSafe($output ?? self::scorerOutput($scorerObservations)),
+            output: $targetReturned ? $output : self::scorerOutput($scorerObservations),
             observations: $observations,
             pricingQuotes: $pricingQuotes,
             scorerObservations: $scorerObservations,
@@ -308,13 +309,14 @@ final class ExecutionRecorder
             identity: new ModelIdentityEvidence(null, null, null, null),
             latencyMs: 0.0,
             passed: true,
-            output: self::jsonSafe($output),
+            output: $output,
             stableResults: self::stableRecords($results, 'Completed trial contains invalid result evidence.'),
         );
     }
 
     /**
      * @param  array<string, mixed>  $sourceTrial
+     * @param  list<AgentObservation>  $judgeObservations
      * @param  list<PestEvalObservation>  $scorerObservations
      */
     public static function recordReplay(
@@ -325,6 +327,7 @@ final class ExecutionRecorder
         string $fingerprint,
         mixed $output,
         array $sourceTrial,
+        array $judgeObservations,
         array $scorerObservations,
         BenchmarkDeclaration $declaration,
         bool $passed,
@@ -346,9 +349,11 @@ final class ExecutionRecorder
             identity: new ModelIdentityEvidence(null, null, null, null),
             latencyMs: 0.0,
             passed: $passed,
-            output: self::jsonSafe($output),
+            output: $output,
+            observations: $judgeObservations,
+            pricingQuotes: array_map(self::quote(...), $judgeObservations),
             scorerObservations: $scorerObservations,
-            sourceMeasurements: self::stableRecords($results[0]['measurements'], 'Replay trial contains invalid target measurements.'),
+            sourceMeasurements: self::targetMeasurements(self::stableRecords($results[0]['measurements'], 'Replay trial contains invalid target measurements.')),
         );
     }
 
@@ -546,11 +551,18 @@ final class ExecutionRecorder
     private static function measurements(RecordedTrial $record): array
     {
         if ($record->sourceMeasurements !== null) {
-            return self::measurementsFromStable($record->sourceMeasurements, $record->fingerprint, true);
+            $measurements = self::measurementsFromStable($record->sourceMeasurements, $record->fingerprint, true);
+        } else {
+            $measurements = [];
         }
 
-        if ($record->observations === []) {
-            return [new Measurement(
+        $targetObservations = array_values(array_filter(
+            $record->observations,
+            static fn (AgentObservation $observation): bool => $observation->component === Component::Target,
+        ));
+
+        if ($record->sourceMeasurements === null && $targetObservations === []) {
+            $measurements[] = new Measurement(
                 component: Component::Target,
                 mode: ExecutionMode::Simulated,
                 requestedProvider: $record->identity->requestedProvider,
@@ -563,16 +575,18 @@ final class ExecutionRecorder
                 pricingCompleteness: PricingCompleteness::Unavailable,
                 pricingSnapshot: [],
                 fingerprint: self::measurementFingerprint($record, 0, null),
-            )];
+            );
         }
 
-        $measurements = [];
+        $componentAttempts = [];
 
         foreach ($record->observations as $index => $observation) {
+            $attempt = $componentAttempts[$observation->component->value] ?? 0;
+            $componentAttempts[$observation->component->value] = $attempt + 1;
             $quote = $record->pricingQuotes[$index] ?? CostQuote::unavailable();
 
             $measurements[] = new Measurement(
-                component: Component::Target,
+                component: $observation->component,
                 mode: $observation->mode,
                 requestedProvider: $observation->requestedProvider,
                 requestedModel: $observation->requestedModel,
@@ -580,14 +594,32 @@ final class ExecutionRecorder
                 effectiveModel: $observation->effectiveModel,
                 latencyMs: $observation->latencyMs,
                 usage: $observation->usage->toArray(),
-                retries: $index,
+                retries: $attempt,
                 pricingCompleteness: PricingCompleteness::from($quote->completeness->value),
                 pricingSnapshot: $quote->toArray(),
-                fingerprint: self::measurementFingerprint($record, $index, $observation),
+                fingerprint: self::measurementFingerprint($record, $attempt, $observation),
             );
         }
 
         return $measurements;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $measurements
+     * @return list<array<string, mixed>>
+     */
+    private static function targetMeasurements(array $measurements): array
+    {
+        $target = array_values(array_filter(
+            $measurements,
+            static fn (array $measurement): bool => ($measurement['component'] ?? null) === Component::Target->value,
+        ));
+
+        if ($target === []) {
+            throw new RuntimeException('Replay trial contains no target measurements.');
+        }
+
+        return $target;
     }
 
     /**
@@ -765,9 +797,13 @@ final class ExecutionRecorder
             $succeeded = $observation->succeeded;
         }
 
+        $component = $observation instanceof AgentObservation
+            ? $observation->component
+            : Component::Target;
+
         return 'sha256:'.hash('sha256', self::encoded([
             'trial' => $record->fingerprint,
-            'component' => Component::Target->value,
+            'component' => $component->value,
             'attempt' => $index,
             'mode' => $observation?->mode->value ?? ExecutionMode::Simulated->value,
             'requested_provider' => $requestedProvider,
@@ -840,6 +876,15 @@ final class ExecutionRecorder
             }
 
             return $stable;
+        }
+
+        if ($value instanceof Configuration) {
+            return [
+                'provider' => $value->provider,
+                'model' => $value->model,
+                'options' => self::stableCaseValue($value->options),
+                'settings' => self::stableCaseValue($value->settings),
+            ];
         }
 
         if ($value instanceof \JsonSerializable) {

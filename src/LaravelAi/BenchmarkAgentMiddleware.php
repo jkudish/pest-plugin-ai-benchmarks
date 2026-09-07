@@ -10,6 +10,7 @@ use Jkudish\LaravelAiPricing\Adapters\LaravelAiObservationAdapter;
 use Jkudish\LaravelAiPricing\Adapters\LaravelAiProviderCostExtractor;
 use Jkudish\LaravelAiPricing\ValueObjects\Money;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
+use Jkudish\PestAiBenchmarks\Scorecards\Component;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
 use Laravel\Ai\AiManager;
 use Laravel\Ai\Prompts\AgentPrompt;
@@ -43,6 +44,7 @@ final class BenchmarkAgentMiddleware
                 succeeded: true,
                 mode: $mode,
                 providerReportedCost: self::providerReportedCost($response, $driver, $mode),
+                component: RuntimeObservationCollector::component() ?? Component::Target,
             ));
 
             return $response;
@@ -56,6 +58,7 @@ final class BenchmarkAgentMiddleware
                 latencyMs: self::elapsedMilliseconds($startedAt),
                 succeeded: false,
                 mode: $mode,
+                component: RuntimeObservationCollector::component() ?? Component::Target,
             ));
 
             throw $exception;

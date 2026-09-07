@@ -6,17 +6,12 @@ namespace Jkudish\PestAiBenchmarks\Runs;
 
 use InvalidArgumentException;
 use Jkudish\PestAiBenchmarks\Results\EvidenceId;
-use Jkudish\PestAiBenchmarks\Results\StableEvidenceSanitizer;
 use JsonException;
 
 /** @internal */
 final readonly class ReplayPayload
 {
     public const string SCHEMA_VERSION = '0.1.0';
-
-    private const string REDACTED = '[REDACTED]';
-
-    private const int MAX_STRING_BYTES = 1_048_576;
 
     /** @var array<int, array{trial_id: string, fingerprint: string, output: mixed}> */
     private array $trials;
@@ -38,12 +33,12 @@ final readonly class ReplayPayload
             $normalized[] = [
                 'trial_id' => $trial['trial_id'],
                 'fingerprint' => $trial['fingerprint'],
-                'output' => $this->redact($trial['output']),
+                'output' => $this->assertJsonSafe($trial['output']),
             ];
         }
 
         try {
-            json_encode($normalized, JSON_THROW_ON_ERROR);
+            json_encode($normalized, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
         } catch (JsonException $exception) {
             throw new InvalidArgumentException('Replay outputs must be JSON-safe.', previous: $exception);
         }
@@ -65,22 +60,14 @@ final readonly class ReplayPayload
     {
         return json_encode(
             $this->toArray(),
-            JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+            JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
         )."\n";
     }
 
-    private function redact(mixed $value, ?string $key = null): mixed
+    private function assertJsonSafe(mixed $value): mixed
     {
-        if ($key !== null && preg_match('/(?:api[_-]?key|authorization|password|secret|credential|private[_-]?key|(?:^|[_-])(?:access|refresh|id)?[_-]?token$)/i', $key) === 1) {
-            return self::REDACTED;
-        }
-
         if (is_float($value) && ! is_finite($value)) {
             throw new InvalidArgumentException('Replay outputs must contain finite numeric values.');
-        }
-
-        if (is_string($value)) {
-            return StableEvidenceSanitizer::text($value, self::MAX_STRING_BYTES);
         }
 
         if (is_scalar($value) || $value === null) {
@@ -91,15 +78,12 @@ final readonly class ReplayPayload
             throw new InvalidArgumentException('Replay outputs must contain only JSON-safe values.');
         }
 
-        $redacted = [];
+        $safe = [];
 
         foreach ($value as $nestedKey => $nestedValue) {
-            $safeKey = is_string($nestedKey)
-                ? StableEvidenceSanitizer::text($nestedKey, self::MAX_STRING_BYTES)
-                : $nestedKey;
-            $redacted[$safeKey] = $this->redact($nestedValue, is_string($safeKey) ? $safeKey : null);
+            $safe[$nestedKey] = $this->assertJsonSafe($nestedValue);
         }
 
-        return $redacted;
+        return $safe;
     }
 }

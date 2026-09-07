@@ -13,7 +13,7 @@ benchmark('retains failed scorer replay evidence', function (): string {
         {
             return new ScorerResult(
                 score: 0.2,
-                reasoning: 'Bearer private-token did not satisfy the required account.',
+                reasoning: 'Customer email customer@example.test and password=hunter2 did not satisfy the required account.',
                 scorer: 'receipt-fields',
             );
         }

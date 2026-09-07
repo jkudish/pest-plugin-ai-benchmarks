@@ -16,6 +16,12 @@ benchmark('applies explicit historical regression gates', function (): string {
     ->configurations(['production' => Configuration::production()])
     ->reference('production')
     ->evaluate(function (string $output): void {
+        $delay = getenv('BENCHMARK_EVALUATION_DELAY_US');
+
+        if (is_string($delay) && ctype_digit($delay)) {
+            usleep((int) $delay);
+        }
+
         expect($output)->toBe('stable output');
     })
     ->failWhen([
