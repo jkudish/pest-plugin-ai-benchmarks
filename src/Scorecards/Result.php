@@ -52,7 +52,10 @@ final readonly class Result
             throw new InvalidArgumentException('A result must contain at least one measurement.');
         }
 
-        $this->reasoning = StableEvidenceSanitizer::text($reasoning, self::MAX_REASONING_BYTES);
+        // Scorer reasoning may contain arbitrary private document content. It
+        // is not safe to make it stable evidence by applying token regexes.
+        unset($reasoning);
+        $this->reasoning = null;
     }
 
     /** @return array<string, mixed> */

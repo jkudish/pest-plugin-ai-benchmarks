@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Jkudish\PestAiBenchmarks\LaravelAi\BenchmarkAgentMiddleware;
 use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
+use Jkudish\PestAiBenchmarks\Scorecards\Component;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
 use Jkudish\PestAiBenchmarks\Tests\LaravelAi\Fixtures\BenchmarkedAgent;
 use Laravel\Ai\AiManager;
@@ -77,6 +78,30 @@ it('captures truthful Laravel AI identity usage and latency during an active ben
         ])
         ->and($observations[0]->latencyMs)->toBeGreaterThanOrEqual(0.0)
         ->and($observations[0]->succeeded)->toBeTrue();
+});
+
+it('records observations under the active scorecard component', function (): void {
+    $provider = Mockery::mock(TextProvider::class);
+    $provider->shouldReceive('name')->once()->andReturn('openrouter');
+    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
+    $prompt = new AgentPrompt(
+        agent: Mockery::mock(Agent::class),
+        prompt: 'Judge this output.',
+        attachments: [],
+        provider: $provider,
+        model: 'judge/model',
+    );
+    $response = new AgentResponse(
+        invocationId: 'invocation-judge',
+        text: 'pass',
+        usage: new Usage(promptTokens: 10, completionTokens: 2),
+        meta: new Meta(provider: 'openrouter', model: 'judge/model'),
+    );
+
+    RuntimeObservationCollector::begin(Component::Judge);
+    (new BenchmarkAgentMiddleware)->handle($prompt, fn (): AgentResponse => $response);
+
+    expect(RuntimeObservationCollector::finish()[0]->component)->toBe(Component::Judge);
 });
 
 it('records failed attempts and rethrows the original exception', function (): void {

@@ -3,11 +3,13 @@
 declare(strict_types=1);
 
 use Jkudish\PestAiBenchmarks\BenchmarkCall;
+use Jkudish\PestAiBenchmarks\BenchmarkClosureInvoker;
 use Jkudish\PestAiBenchmarks\BenchmarkExecutor;
 use Jkudish\PestAiBenchmarks\Benchmarks;
 use Jkudish\PestAiBenchmarks\Comparisons\DeclarationContext;
 use Jkudish\PestAiBenchmarks\Comparisons\DeclarationRegistry;
 use Jkudish\PestAiBenchmarks\Configuration;
+use Jkudish\PestAiBenchmarks\ConfigurationDatasetValue;
 use Jkudish\PestAiBenchmarks\Evidence\RuntimeScorerCollector;
 use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
 use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
@@ -16,6 +18,7 @@ use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
 use Jkudish\PestAiBenchmarks\Runs\ReplayReader;
 use Jkudish\PestAiBenchmarks\Runs\ResumeReader;
 use Jkudish\PestAiBenchmarks\Runs\RunPaths;
+use Jkudish\PestAiBenchmarks\Scorecards\Component;
 use Pest\TestSuite;
 use PHPUnit\Framework\Assert;
 
@@ -40,9 +43,9 @@ if (! function_exists('benchmark')) {
                 $configurationName = 'production';
 
                 foreach ($arguments as $index => $argument) {
-                    if ($argument instanceof Configuration) {
-                        $configuration = $argument;
-                        $configurationName = DeclarationRegistry::configurationName($argument);
+                    if ($argument instanceof ConfigurationDatasetValue) {
+                        $configuration = $argument->configuration;
+                        $configurationName = DeclarationRegistry::configurationName($configuration);
                         unset($arguments[$index]);
 
                         break;
@@ -90,6 +93,8 @@ if (! function_exists('benchmark')) {
                     $output = null;
                     $sourceTrial = null;
                     $passed = false;
+                    $judgeObservations = [];
+                    RuntimeObservationCollector::begin(Component::Judge);
                     RuntimeScorerCollector::begin();
 
                     try {
@@ -106,9 +111,10 @@ if (! function_exists('benchmark')) {
                             },
                         );
 
-                        $declaration->evaluation->call($this, $output, ...$caseArguments);
+                        BenchmarkClosureInvoker::invoke($declaration->evaluation, $this, $output, ...$caseArguments);
                         $passed = true;
                     } finally {
+                        $judgeObservations = RuntimeObservationCollector::finish();
                         $scorerObservations = RuntimeScorerCollector::finish();
 
                         if (is_array($sourceTrial)) {
@@ -120,6 +126,7 @@ if (! function_exists('benchmark')) {
                                 fingerprint: $fingerprint,
                                 output: $output,
                                 sourceTrial: $sourceTrial,
+                                judgeObservations: $judgeObservations,
                                 scorerObservations: $scorerObservations,
                                 declaration: $declaration,
                                 passed: $passed,
@@ -153,12 +160,15 @@ if (! function_exists('benchmark')) {
 
                         if ($declaration->evaluation instanceof Closure && is_array($sourceTrial)) {
                             $passed = false;
+                            $judgeObservations = [];
+                            RuntimeObservationCollector::begin(Component::Judge);
                             RuntimeScorerCollector::begin();
 
                             try {
-                                $declaration->evaluation->call($this, $output, ...$caseArguments);
+                                BenchmarkClosureInvoker::invoke($declaration->evaluation, $this, $output, ...$caseArguments);
                                 $passed = true;
                             } finally {
+                                $judgeObservations = RuntimeObservationCollector::finish();
                                 ExecutionRecorder::recordReplay(
                                     benchmark: $description,
                                     caseId: $caseId,
@@ -167,6 +177,7 @@ if (! function_exists('benchmark')) {
                                     fingerprint: $fingerprint,
                                     output: $output,
                                     sourceTrial: $sourceTrial,
+                                    judgeObservations: $judgeObservations,
                                     scorerObservations: RuntimeScorerCollector::finish(),
                                     declaration: $declaration,
                                     passed: $passed,
@@ -186,21 +197,27 @@ if (! function_exists('benchmark')) {
                         $startedAt = hrtime(true);
                         $output = null;
                         $passed = false;
+                        $observations = [];
                         RuntimeObservationCollector::begin();
                         RuntimeScorerCollector::begin();
 
                         try {
-                            $output = $test->call($this, ...$caseArguments);
+                            $output = BenchmarkClosureInvoker::invoke($test, $this, ...$caseArguments);
+
+                            $observations = RuntimeObservationCollector::finish();
+                            RuntimeObservationCollector::begin(Component::Judge);
 
                             if ($declaration->evaluation instanceof Closure) {
-                                $declaration->evaluation->call($this, $output, ...$caseArguments);
+                                BenchmarkClosureInvoker::invoke($declaration->evaluation, $this, $output, ...$caseArguments);
                             }
 
                             $passed = true;
                         } catch (Throwable $exception) {
                             throw $exception;
                         } finally {
-                            $observations = RuntimeObservationCollector::finish();
+                            if (RuntimeObservationCollector::active()) {
+                                $observations = [...$observations, ...RuntimeObservationCollector::finish()];
+                            }
                             $scorerObservations = RuntimeScorerCollector::finish();
 
                             ExecutionRecorder::record(

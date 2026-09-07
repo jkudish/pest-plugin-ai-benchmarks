@@ -97,6 +97,47 @@ it('replays private output through evaluate without invoking the target', functi
         ->toThrow(RuntimeException::class, 'Simulated evidence cannot be promoted');
 });
 
+it('invokes static targets and evaluations consistently in live, replay, and resume', function (): void {
+    $targetCounter = tempnam(sys_get_temp_dir(), 'pest-ai-target-');
+    $evaluationCounter = tempnam(sys_get_temp_dir(), 'pest-ai-evaluate-');
+
+    expect($targetCounter)->toBeString()
+        ->and($evaluationCounter)->toBeString();
+
+    $environment = [
+        'BENCHMARK_TARGET_COUNTER' => $targetCounter,
+        'BENCHMARK_EVALUATION_COUNTER' => $evaluationCounter,
+    ];
+    $source = runLifecycleFixture('StaticClosureExecutionBenchmark.php', environment: $environment);
+
+    expect($source['process']->isSuccessful())->toBeTrue()
+        ->and(lifecycleCounter($targetCounter))->toBe(1)
+        ->and(lifecycleCounter($evaluationCounter))->toBe(1);
+
+    file_put_contents($targetCounter, '');
+    file_put_contents($evaluationCounter, '');
+    $replay = runLifecycleFixture(
+        'StaticClosureExecutionBenchmark.php',
+        ["--benchmark-replay={$source['run_id']}"],
+        $environment,
+    );
+
+    expect($replay['process']->isSuccessful())->toBeTrue()
+        ->and(lifecycleCounter($targetCounter))->toBe(0)
+        ->and(lifecycleCounter($evaluationCounter))->toBe(1);
+
+    file_put_contents($evaluationCounter, '');
+    $resume = runLifecycleFixture(
+        'StaticClosureExecutionBenchmark.php',
+        ["--benchmark-resume={$source['run_id']}"],
+        $environment,
+    );
+
+    expect($resume['process']->isSuccessful())->toBeTrue()
+        ->and(lifecycleCounter($targetCounter))->toBe(0)
+        ->and(lifecycleCounter($evaluationCounter))->toBe(1);
+});
+
 it('records ordinary evaluate expectation failures truthfully in live and replay evidence', function (): void {
     $targetCounter = tempnam(sys_get_temp_dir(), 'pest-ai-target-');
 

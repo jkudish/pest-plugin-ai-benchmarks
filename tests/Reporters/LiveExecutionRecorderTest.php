@@ -13,6 +13,7 @@ use Jkudish\PestAiBenchmarks\LaravelAi\AgentObservation;
 use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
 use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
+use Jkudish\PestAiBenchmarks\Scorecards\Component;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
 
 beforeEach(function (): void {
@@ -168,6 +169,64 @@ it('keeps fake-gateway observations simulated and unpriced', function (): void {
 
     expect($measurement['mode'])->toBe('simulated')
         ->and($measurement['pricing']['completeness'])->toBe('unavailable');
+});
+
+it('keeps judge observations out of target retry accounting', function (): void {
+    ExecutionRecorder::record(
+        benchmark: 'target and judge evidence',
+        caseId: 'receipt-judge',
+        configurationName: 'candidate',
+        configuration: Configuration::model('openrouter', 'router/requested'),
+        identity: new ModelIdentityEvidence('openrouter', 'router/requested', 'openrouter', 'router/requested'),
+        latencyMs: 30,
+        passed: true,
+        output: ['merchant' => 'Acme'],
+        context: null,
+        targetIdentity: [
+            'file' => 'tests/Evals/Receipt.php',
+            'start_line' => 10,
+            'end_line' => 20,
+            'source_sha256' => str_repeat('d', 64),
+        ],
+        observations: [
+            new AgentObservation(
+                requestedProvider: 'openrouter',
+                requestedModel: 'router/requested',
+                effectiveProvider: null,
+                effectiveModel: null,
+                usage: new NormalizedUsage,
+                latencyMs: 10,
+                succeeded: false,
+                component: Component::Target,
+            ),
+            new AgentObservation(
+                requestedProvider: 'openrouter',
+                requestedModel: 'router/fallback',
+                effectiveProvider: 'openrouter',
+                effectiveModel: 'router/fallback',
+                usage: new NormalizedUsage(inputTokens: 10, outputTokens: 2),
+                latencyMs: 15,
+                succeeded: true,
+                component: Component::Target,
+            ),
+            new AgentObservation(
+                requestedProvider: 'openai',
+                requestedModel: 'judge/model',
+                effectiveProvider: 'openai',
+                effectiveModel: 'judge/model',
+                usage: new NormalizedUsage(inputTokens: 20, outputTokens: 4),
+                latencyMs: 5,
+                succeeded: true,
+                component: Component::Judge,
+            ),
+        ],
+    );
+
+    $measurements = ExecutionRecorder::flush()[0]->toArray()['trials'][0]['results'][0]['measurements'];
+
+    expect(array_column($measurements, 'component'))->toBe(['target', 'target', 'judge'])
+        ->and(array_column($measurements, 'retries'))->toBe([0, 1, 0])
+        ->and(array_unique(array_column($measurements, 'fingerprint')))->toHaveCount(3);
 });
 
 it('keeps pre-execution trial fingerprints stable while measurement fingerprints retain runtime identity', function (): void {

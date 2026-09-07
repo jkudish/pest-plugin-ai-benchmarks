@@ -120,16 +120,12 @@ it('keeps private raw evaluation material out of stable scorecards', function ()
         ->and(str_contains($json, '"expected":'))->toBeFalse();
 });
 
-it('sanitizes and bounds scorer reasoning before serialization', function (): void {
+it('omits arbitrary scorer reasoning from stable serialization', function (): void {
     $reasoning = 'Bearer private-token sk-1234567890abcdefgh '.str_repeat('é', Result::MAX_REASONING_BYTES);
     $serialized = scorecardFixture(reasoning: $reasoning)->toArray();
     $stableReasoning = $serialized['trials'][0]['results'][0]['reasoning'];
 
-    expect($stableReasoning)->toBeString()
-        ->and($stableReasoning)->not->toContain('private-token')
-        ->and($stableReasoning)->not->toContain('sk-1234567890abcdefgh')
-        ->and(strlen($stableReasoning))->toBeLessThanOrEqual(Result::MAX_REASONING_BYTES)
-        ->and(mb_check_encoding($stableReasoning, 'UTF-8'))->toBeTrue();
+    expect($stableReasoning)->toBeNull();
 });
 
 it('bundles a JSON Schema 2020-12 contract matching the serializer version', function (): void {
@@ -167,8 +163,7 @@ it('recursively sanitizes and bounds stable scorecard strings and nested evidenc
         fingerprint: 'sha256:sanitized',
     ))->toArray();
 
-    expect($serialized['trials'][0]['results'][0]['reasoning'])->not->toContain('private-token')
-        ->and(mb_check_encoding($serialized['trials'][0]['results'][0]['reasoning'], 'UTF-8'))->toBeTrue()
+    expect($serialized['trials'][0]['results'][0]['reasoning'])->toBeNull()
         ->and($measurement['usage']['nested']['access_token'])->toBe('[REDACTED]')
         ->and(mb_check_encoding($measurement['usage']['nested']['label'], 'UTF-8'))->toBeTrue()
         ->and($measurement['pricing']['snapshot']['authorization'])->toBe('[REDACTED]');
