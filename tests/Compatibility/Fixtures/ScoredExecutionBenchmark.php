@@ -19,7 +19,7 @@ benchmark('records native Pest scorer evidence', function (): string {
         }
     };
 
-    expect($output)->toPassScorer(
+    expect($output)->toPassBenchmarkScorer(
         scorer: $scorer,
         threshold: 0.9,
         expected: '{"merchant":"Uber","account":"493"}',

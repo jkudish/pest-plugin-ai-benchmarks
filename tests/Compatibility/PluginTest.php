@@ -205,7 +205,7 @@ it('records Pest repetitions under stable case identities', function (): void {
     }
 });
 
-it('captures native Pest scorer results through the fork callback', function (): void {
+it('captures native Pest scorer results through the benchmark expectation', function (): void {
     $root = dirname(__DIR__, 2);
     $before = glob($root.'/storage/app/ai-evals/runs/*/scorecard.json') ?: [];
     $process = new Process([

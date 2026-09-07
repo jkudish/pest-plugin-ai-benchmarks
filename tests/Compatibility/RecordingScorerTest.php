@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Jkudish\PestAiBenchmarks\Evidence\RecordingScorer;
+use Jkudish\PestAiBenchmarks\Evidence\RuntimeScorerCollector;
 use Jkudish\PestAiBenchmarks\Evidence\ScorerEvidence;
 use Pest\Evals\Scorers\Scorer;
 use Pest\Evals\Scorers\ScorerResult;
@@ -120,6 +121,29 @@ it('works with the public Pest Evals expectation without parsing terminal output
         ->and($recorded[0]->output)->toBe('actual output')
         ->and($recorded[0]->expected)->toBe('expected output')
         ->and($recorded[0]->result->score)->toBe(1.0);
+});
+
+it('records scorer evidence through the benchmark expectation without an upstream callback', function (): void {
+    RuntimeScorerCollector::begin();
+
+    try {
+        expect('actual output')->toPassBenchmarkScorer(
+            scorer: fixedScorer(0.85),
+            threshold: 0.8,
+            expected: 'expected output',
+        );
+    } finally {
+        $recorded = RuntimeScorerCollector::finish();
+    }
+
+    expect($recorded)->toHaveCount(1)
+        ->and($recorded[0]->score)->toBe(0.85)
+        ->and($recorded[0]->threshold)->toBe(0.8)
+        ->and($recorded[0]->passed)->toBeTrue()
+        ->and($recorded[0]->sample)->toBe(1)
+        ->and($recorded[0]->samples)->toBe(1)
+        ->and($recorded[0]->output)->toBe('actual output')
+        ->and($recorded[0]->expected)->toBe('expected output');
 });
 
 it('preserves scorer exceptions and does not invoke the callback', function (): void {

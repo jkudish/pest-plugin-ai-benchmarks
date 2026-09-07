@@ -11,8 +11,8 @@ Pest AI Benchmarks extends Pest's existing vocabulary with comparative configura
 - [x] Replay, compatible resume, baseline promotion, and historical gates.
 - [x] Stable identities and fail-closed source fingerprints.
 - [x] Pass-rate, latency, and cost regression policies.
-- [ ] Land and release the upstream Pest Evals scorer-result callback.
-- [ ] Replace development branch dependencies with tagged constraints.
+- [x] Record explicit scorer results through Pest Evals' public scorer contract.
+- [x] Replace development branch dependencies with tagged constraints.
 - [ ] Publish `v0.1.0` to GitHub and Packagist.
 - [ ] Verify installation in a clean consumer without sibling path repositories.
 
