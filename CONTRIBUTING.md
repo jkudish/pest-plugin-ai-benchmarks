@@ -20,7 +20,7 @@ workspace/
 ```
 
 ```bash
-git clone https://github.com/jkudish/laravel-ai-pricing.git
+git clone --branch v0.1.0 https://github.com/jkudish/laravel-ai-pricing.git
 git clone https://github.com/jkudish/pest-plugin-ai-benchmarks.git
 cd pest-plugin-ai-benchmarks
 composer install
