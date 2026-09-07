@@ -218,7 +218,7 @@ Benchmark evals deliberately run serially. Combining `--evals` with `--parallel`
 - PHP 8.4 or newer.
 - Laravel 13 for the standard Pest Laravel integration.
 - Pest 5.
-- Pest Evals 5.0.3 or newer.
+- Pest Evals 5.0.2 or newer.
 
 The package keeps Illuminate 12-compatible contracts for custom bootstraps. Pest Laravel 5 currently requires Laravel 13.23 or newer, so the conventional Laravel 12 integration is outside the version 0.1 support matrix.
 
