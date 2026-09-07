@@ -14,7 +14,7 @@ Pest AI Benchmarks preserves Pest's datasets, expectations, repetitions, filteri
 
 It builds on [Pest Evals](https://github.com/pestphp/pest-plugin-evals) for scoring and [Laravel AI Pricing](https://github.com/jkudish/laravel-ai-pricing) for cost attribution. It does not introduce competing scorer, judge, case, candidate, or sampling APIs.
 
-> **Pre-release:** version 0.1 is feature-complete, but public installation remains gated on the scorer-result callback in [Pest Evals PR #4](https://github.com/pestphp/pest-plugin-evals/pull/4) being released upstream.
+> **Pre-release:** version 0.1 is feature-complete but has not yet been published.
 
 ## Installation
 
@@ -100,15 +100,20 @@ The `options` key is optional when candidates do not override provider options. 
 
 The benchmark target returns a JSON-safe output. `evaluate()` is the reusable expectation boundary invoked with that output followed by the original dataset arguments.
 
-It can use ordinary Pest expectations or Pest Evals expectations:
+It can use ordinary Pest expectations or Pest Evals scorers. Use `toPassBenchmarkScorer()` when a scorer result must be included in the benchmark scorecard:
 
 ```php
 ->evaluate(function (string $output): void {
-    expect($output)->toPassScorer(new ReceiptAccuracyScorer);
+    expect($output)->toPassBenchmarkScorer(
+        scorer: new ReceiptAccuracyScorer,
+        threshold: 0.9,
+    );
 })
 ```
 
-The same callback runs after a live target, during replay, and when resume reuses compatible output.
+The benchmark expectation delegates scoring and pass/fail behavior to Pest Evals' native `toPassScorer()` expectation while recording the result through its public `Scorer` contract. This avoids an unpublished callback or a maintained Pest Evals fork. Pest Evals convenience expectations such as `toBeRelevant()` remain available as ordinary assertions, but version 0.1 only records explicitly supplied scorers in benchmark scorecards.
+
+The same evaluation callback runs after a live target, during replay, and when resume reuses compatible output.
 
 ## Laravel AI observations
 
@@ -213,7 +218,7 @@ Benchmark evals deliberately run serially. Combining `--evals` with `--parallel`
 - PHP 8.4 or newer.
 - Laravel 13 for the standard Pest Laravel integration.
 - Pest 5.
-- Pest Evals 5 with the scorer-result callback proposed in [PR #4](https://github.com/pestphp/pest-plugin-evals/pull/4).
+- Pest Evals 5.0.2 or newer.
 
 The package keeps Illuminate 12-compatible contracts for custom bootstraps. Pest Laravel 5 currently requires Laravel 13.23 or newer, so the conventional Laravel 12 integration is outside the version 0.1 support matrix.
 

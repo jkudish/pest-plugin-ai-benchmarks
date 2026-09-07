@@ -3,18 +3,18 @@
 declare(strict_types=1);
 
 use Jkudish\PestAiBenchmarks\Evidence\PestEvalObservation;
-use Pest\Evals\Events\Scored;
+use Jkudish\PestAiBenchmarks\Evidence\ScorerEvidence;
 use Pest\Evals\Scorers\ScorerResult;
 
 it('normalizes unsafe custom scorer evidence before recording it', function (): void {
-    $observation = PestEvalObservation::fromEvent(new Scored(
-        result: new ScorerResult(1.2, 'Custom scorer result.', '  '),
-        threshold: 1.1,
+    $observation = PestEvalObservation::fromEvidence(new ScorerEvidence(
+        sampleId: 'sample-1',
+        sampleOrder: 1,
         input: 'input',
         output: 'output',
         expected: null,
-        sample: 1,
-        samples: 1,
+        threshold: 1.0,
+        result: new ScorerResult(1.2, 'Custom scorer result.', '  '),
     ));
 
     expect($observation->scorer)->toBe('unnamed-scorer')
@@ -24,14 +24,14 @@ it('normalizes unsafe custom scorer evidence before recording it', function (): 
 });
 
 it('turns non-finite custom scorer evidence into a safe failure', function (): void {
-    $observation = PestEvalObservation::fromEvent(new Scored(
-        result: new ScorerResult(NAN, 'Invalid scorer result.', 'custom'),
-        threshold: 0.5,
+    $observation = PestEvalObservation::fromEvidence(new ScorerEvidence(
+        sampleId: 'sample-1',
+        sampleOrder: 1,
         input: 'input',
         output: 'output',
         expected: null,
-        sample: 1,
-        samples: 1,
+        threshold: 0.5,
+        result: new ScorerResult(NAN, 'Invalid scorer result.', 'custom'),
     ));
 
     expect($observation->score)->toBe(0.0)

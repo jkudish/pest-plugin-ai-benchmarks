@@ -52,7 +52,7 @@ $lifecycleBenchmark = benchmark('replays and resumes declared evaluation callbac
             }
         };
 
-        expect($output)->toPassScorer(
+        expect($output)->toPassBenchmarkScorer(
             scorer: $scorer,
             threshold: 1.0,
             expected: "output:{$case}",

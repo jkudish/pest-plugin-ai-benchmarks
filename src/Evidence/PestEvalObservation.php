@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Jkudish\PestAiBenchmarks\Evidence;
 
-use Pest\Evals\Events\Scored;
-
 final readonly class PestEvalObservation
 {
     public function __construct(
@@ -21,23 +19,23 @@ final readonly class PestEvalObservation
         public ?string $expected,
     ) {}
 
-    public static function fromEvent(Scored $event): self
+    public static function fromEvidence(ScorerEvidence $evidence, int $samples = 1): self
     {
-        $score = self::normalizedScore($event->result->score);
-        $threshold = self::normalizedScore($event->threshold);
-        $scorer = trim($event->result->scorer);
+        $score = self::normalizedScore($evidence->result->score);
+        $threshold = self::normalizedScore($evidence->threshold);
+        $scorer = trim($evidence->result->scorer);
 
         return new self(
             scorer: $scorer !== '' ? $scorer : 'unnamed-scorer',
             score: $score,
-            reasoning: $event->result->reasoning,
+            reasoning: $evidence->result->reasoning,
             threshold: $threshold,
             passed: $score >= $threshold,
-            sample: $event->sample,
-            samples: $event->samples,
-            input: $event->input,
-            output: $event->output,
-            expected: $event->expected,
+            sample: $evidence->sampleOrder,
+            samples: $samples,
+            input: $evidence->input,
+            output: $evidence->output,
+            expected: $evidence->expected,
         );
     }
 

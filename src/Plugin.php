@@ -6,16 +6,20 @@ namespace Jkudish\PestAiBenchmarks;
 
 use InvalidArgumentException;
 use Jkudish\PestAiBenchmarks\Evidence\PestEvalObservation;
+use Jkudish\PestAiBenchmarks\Evidence\RecordingScorer;
 use Jkudish\PestAiBenchmarks\Evidence\RuntimeScorerCollector;
+use Jkudish\PestAiBenchmarks\Evidence\ScorerEvidence;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
 use Jkudish\PestAiBenchmarks\Reporters\TerminalReporter;
 use Jkudish\PestAiBenchmarks\Runs\RunId;
+use LogicException;
 use Pest\Contracts\Plugins\AddsOutput;
 use Pest\Contracts\Plugins\Bootable;
 use Pest\Contracts\Plugins\HandlesArguments;
 use Pest\Contracts\Plugins\HandlesOriginalArguments;
 use Pest\Contracts\Plugins\Terminable;
-use Pest\Evals\Events\Scored;
+use Pest\Evals\Scorers\Scorer;
+use Pest\Expectation;
 use Pest\Plugins\Parallel;
 use Pest\Support\Container;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -36,8 +40,29 @@ final class Plugin implements AddsOutput, Bootable, HandlesArguments, HandlesOri
 
     public function boot(): void
     {
-        pest()->evals()->afterScored(function (Scored $event): void {
-            RuntimeScorerCollector::record(PestEvalObservation::fromEvent($event));
+        expect()->extend('toPassBenchmarkScorer', function (
+            Scorer $scorer,
+            float $threshold = Scorer::DEFAULT_THRESHOLD,
+            ?string $expected = null,
+        ): Expectation {
+            /** @var Expectation<string> $this */
+            $recordingScorer = new RecordingScorer(
+                scorer: $scorer,
+                sampleId: 'benchmark-trial',
+                sampleOrder: 1,
+                threshold: $threshold,
+                record: function (ScorerEvidence $evidence): void {
+                    RuntimeScorerCollector::record(PestEvalObservation::fromEvidence($evidence));
+                },
+            );
+
+            $expectation = $this->__call('toPassScorer', [$recordingScorer, $threshold, $expected]);
+
+            if (! $expectation instanceof Expectation) {
+                throw new LogicException('Pest Evals [toPassScorer] did not return the active expectation.');
+            }
+
+            return $expectation;
         });
     }
 

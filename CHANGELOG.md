@@ -20,5 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sanitized baseline promotion and historical regression gates.
 - Pass-rate, median-latency, and average-cost comparison policies.
 - Explicit rejection of unsupported parallel benchmark execution.
+- Benchmark-owned `toPassBenchmarkScorer()` evidence capture using Pest Evals' public scorer contract.
 
 [Unreleased]: https://github.com/jkudish/pest-plugin-ai-benchmarks/commits/main
