@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Jkudish\PestAiBenchmarks\LaravelAi;
 
 use Closure;
+use Generator;
 use Illuminate\Container\Container;
 use Jkudish\LaravelAiPricing\Adapters\LaravelAiObservationAdapter;
 use Jkudish\LaravelAiPricing\Adapters\LaravelAiProviderCostExtractor;
@@ -38,53 +39,108 @@ final class BenchmarkAgentMiddleware
         try {
             $result = $next($step);
         } catch (Throwable $exception) {
-            RuntimeObservationCollector::recordStep(
-                invocationId: $step->invocationId,
-                isFirstStep: $step->isFirstStep(),
-                startedAt: $startedAt,
-                endedAt: hrtime(true),
-                observation: new AgentObservation(
-                    requestedProvider: $step->provider,
-                    requestedModel: $step->model,
-                    effectiveProvider: null,
-                    effectiveModel: null,
-                    usage: new NormalizedUsage,
-                    latencyMs: self::elapsedMilliseconds($startedAt),
-                    succeeded: false,
-                    mode: $mode,
-                    component: $component,
-                ),
-            );
+            self::recordFailedStep($step, $startedAt, $mode, $component);
 
             throw $exception;
         }
 
-        $result->then(function (StepResponse $response) use ($step, $startedAt, $mode, $component): void {
-            $endedAt = hrtime(true);
-            [$effectiveProvider, $effectiveModel] = self::effectiveIdentity($response->meta);
-            $driver = self::driver($step, $response->meta);
+        if ($result->streamed()) {
+            return self::wrapStreamedResult($result, $step, $startedAt, $mode, $component);
+        }
 
-            RuntimeObservationCollector::recordStep(
-                invocationId: $step->invocationId,
-                isFirstStep: $step->isFirstStep(),
-                startedAt: $startedAt,
-                endedAt: $endedAt,
-                observation: new AgentObservation(
-                    requestedProvider: $step->provider,
-                    requestedModel: $step->model,
-                    effectiveProvider: $effectiveProvider,
-                    effectiveModel: $effectiveModel,
-                    usage: self::usage($response, $driver),
-                    latencyMs: self::elapsedMilliseconds($startedAt, $endedAt),
-                    succeeded: true,
-                    mode: $mode,
-                    providerReportedCost: self::providerReportedCost($response, $driver, $mode),
-                    component: $component,
-                ),
-            );
+        $result->then(function (StepResponse $response) use ($step, $startedAt, $mode, $component): void {
+            self::recordSuccessfulStep($step, $startedAt, $mode, $component, $response);
         });
 
         return $result;
+    }
+
+    /**
+     * A streamed step result resolves while the consumer iterates it, not while
+     * $next runs, so failures surface outside the try above: a generator that
+     * throws mid-stream never reaches resolve(), and a stream that ends with an
+     * Error event resolves without a response, skipping the then() callbacks
+     * before TextGenerationLoop throws its StreamErrorException. Wrap the stream
+     * so the consumer's iteration records those failures, and record success
+     * from the wrapper's own resolution.
+     */
+    private static function wrapStreamedResult(StepResult $result, PendingStep $step, int $startedAt, ExecutionMode $mode, Component $component): StepResult
+    {
+        $stream = static function () use ($result, $step, $startedAt, $mode, $component): Generator {
+            try {
+                yield from $result;
+            } catch (Throwable $exception) {
+                self::recordFailedStep($step, $startedAt, $mode, $component);
+
+                throw $exception;
+            }
+
+            if ($result->response() === null) {
+                self::recordFailedStep($step, $startedAt, $mode, $component);
+            }
+
+            return $result->response();
+        };
+
+        $wrapped = new StepResult(
+            $stream(),
+            step: $result->step,
+            context: $result->context,
+            startedAt: $result->startedAt,
+        );
+
+        $wrapped->then(function (StepResponse $response) use ($step, $startedAt, $mode, $component): void {
+            self::recordSuccessfulStep($step, $startedAt, $mode, $component, $response);
+        });
+
+        return $wrapped;
+    }
+
+    private static function recordSuccessfulStep(PendingStep $step, int $startedAt, ExecutionMode $mode, Component $component, StepResponse $response): void
+    {
+        $endedAt = hrtime(true);
+        [$effectiveProvider, $effectiveModel] = self::effectiveIdentity($response->meta);
+        $driver = self::driver($step, $response->meta);
+
+        RuntimeObservationCollector::recordStep(
+            invocationId: $step->invocationId,
+            isFirstStep: $step->isFirstStep(),
+            startedAt: $startedAt,
+            endedAt: $endedAt,
+            observation: new AgentObservation(
+                requestedProvider: $step->provider,
+                requestedModel: $step->model,
+                effectiveProvider: $effectiveProvider,
+                effectiveModel: $effectiveModel,
+                usage: self::usage($response, $driver),
+                latencyMs: self::elapsedMilliseconds($startedAt, $endedAt),
+                succeeded: true,
+                mode: $mode,
+                providerReportedCost: self::providerReportedCost($response, $driver, $mode),
+                component: $component,
+            ),
+        );
+    }
+
+    private static function recordFailedStep(PendingStep $step, int $startedAt, ExecutionMode $mode, Component $component): void
+    {
+        RuntimeObservationCollector::recordStep(
+            invocationId: $step->invocationId,
+            isFirstStep: $step->isFirstStep(),
+            startedAt: $startedAt,
+            endedAt: hrtime(true),
+            observation: new AgentObservation(
+                requestedProvider: $step->provider,
+                requestedModel: $step->model,
+                effectiveProvider: null,
+                effectiveModel: null,
+                usage: new NormalizedUsage,
+                latencyMs: self::elapsedMilliseconds($startedAt),
+                succeeded: false,
+                mode: $mode,
+                component: $component,
+            ),
+        );
     }
 
     private static function usage(StepResponse $response, string $driver): NormalizedUsage
