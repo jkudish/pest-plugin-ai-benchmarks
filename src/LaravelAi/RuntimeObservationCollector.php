@@ -59,10 +59,12 @@ final class RuntimeObservationCollector
      *
      * laravel/ai 1.0 middleware wraps each generation step, while a measurement
      * row describes a whole invocation attempt. Steps are therefore folded back
-     * into a single observation per attempt: usage and provider-reported cost are
-     * summed, latency becomes the span from the attempt's first step to its last,
-     * and a step failure fails the attempt. A first step always opens a new
-     * attempt, so retried or resumed invocations stay separate measurements.
+     * into a single observation per attempt: usage and provider-reported cost
+     * are summed, latency becomes the span from the attempt's first step to its
+     * last, and any failed step marks the whole attempt failed — the attempt
+     * itself stays open, and a later step of the same invocation still folds
+     * into it. A first step always opens a new attempt, so retried or resumed
+     * invocations stay separate measurements.
      */
     public static function recordStep(?string $invocationId, bool $isFirstStep, int $startedAt, int $endedAt, AgentObservation $observation): void
     {
@@ -79,7 +81,13 @@ final class RuntimeObservationCollector
                 }
             }
         } else {
-            $index = array_key_last(self::$openBuckets);
+            // An unidentified step may only continue an unidentified attempt;
+            // merging it into an identified bucket would attribute another
+            // invocation's usage to it.
+            $last = array_key_last(self::$openBuckets);
+            if ($last !== null && self::$openBuckets[$last]['invocationId'] === null) {
+                $index = $last;
+            }
         }
 
         if ($index === null || $isFirstStep) {
@@ -171,6 +179,12 @@ final class RuntimeObservationCollector
         return (string) BigDecimal::of($a)->plus(BigDecimal::of($b));
     }
 
+    /**
+     * Provider-reported cost is all-or-nothing across an attempt's steps: a
+     * single summed total only when every step reports one, otherwise null. A
+     * partial sum would understate the authoritative provider figure, so the
+     * observation records no cost rather than an incomplete one.
+     */
     private static function mergedCost(?Money $into, ?Money $step): ?Money
     {
         if ($into === null || $step === null) {

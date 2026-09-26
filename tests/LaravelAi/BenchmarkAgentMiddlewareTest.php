@@ -209,6 +209,112 @@ it('records failed attempts and rethrows the original exception', function (): v
         ->and($observations[0]->succeeded)->toBeFalse();
 });
 
+it('folds a failed non-first step into its attempt with the earlier steps usage', function (): void {
+    $middleware = new BenchmarkAgentMiddleware;
+    $first = new StepResponse(
+        text: 'searching',
+        toolCalls: [],
+        finishReason: FinishReason::ToolCalls,
+        usage: new TextUsage(inputTokens: 100, outputTokens: 10),
+        meta: new Meta(provider: 'google', model: 'gemini-effective'),
+    );
+    $failure = new RuntimeException('Provider timed out.');
+
+    RuntimeObservationCollector::begin();
+
+    settle($middleware->handle(benchmarkStep(number: 0), fn (): StepResult => new StepResult($first)));
+
+    try {
+        $middleware->handle(benchmarkStep(number: 1), fn (): never => throw $failure);
+    } catch (RuntimeException $exception) {
+        expect($exception)->toBe($failure);
+    }
+
+    $observations = RuntimeObservationCollector::finish();
+
+    // The attempt stays a single observation: the failed step marks it failed
+    // without discarding the usage the earlier step already reported.
+    expect($observations)->toHaveCount(1)
+        ->and($observations[0]->succeeded)->toBeFalse()
+        ->and($observations[0]->usage->inputTokens)->toBe(100)
+        ->and($observations[0]->usage->outputTokens)->toBe(10);
+});
+
+it('records no provider-reported cost when any step of the invocation reports none', function (): void {
+    $this->app->register(AiServiceProvider::class);
+
+    config([
+        'ai.providers.router-alias' => ['name' => 'router-alias', 'driver' => 'openrouter', 'key' => 'test-key'],
+    ]);
+
+    $middleware = new BenchmarkAgentMiddleware;
+    $costed = (new StepResponse(
+        text: 'ok',
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 10, outputTokens: 2),
+        meta: new Meta(provider: 'router-alias', model: 'openai/gpt-test'),
+    ))->withRawResponse(new HttpResponse(new Psr7Response(
+        body: json_encode(['usage' => ['cost' => 0.1]], JSON_THROW_ON_ERROR),
+        headers: ['Content-Type' => 'application/json'],
+    )));
+    $uncosted = new StepResponse(
+        text: '{"merchant":"Acme"}',
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 10, outputTokens: 2),
+        meta: new Meta(provider: 'router-alias', model: 'openai/gpt-test'),
+    );
+
+    RuntimeObservationCollector::begin();
+
+    settle($middleware->handle(benchmarkStep(provider: 'router-alias'), fn (): StepResult => new StepResult($costed)));
+    settle($middleware->handle(benchmarkStep(provider: 'router-alias', number: 1), fn (): StepResult => new StepResult($uncosted)));
+
+    $observation = RuntimeObservationCollector::finish()[0];
+
+    // Provider-reported cost is all-or-nothing across the folded steps: the
+    // second response carried no raw cost, so no partial total is recorded.
+    expect($observation->providerReportedCost)->toBeNull()
+        ->and($observation->usage->inputTokens)->toBe(20);
+});
+
+it('defers recording a generator-backed step result until the stream resolves', function (): void {
+    $response = new StepResponse(
+        text: 'ok',
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 10, outputTokens: 2),
+        meta: new Meta(provider: 'google', model: 'gemini-effective'),
+    );
+    $handled = fn (): StepResult => (new BenchmarkAgentMiddleware)->handle(benchmarkStep(), function (PendingStep $step) use ($response): StepResult {
+        return new StepResult((static function () use ($response): Generator {
+            yield from [];
+
+            return $response;
+        })());
+    });
+
+    RuntimeObservationCollector::begin();
+    $result = $handled();
+
+    // The stream has not resolved, so the middleware's then() callback is
+    // still pending and nothing has been recorded yet.
+    expect($result->streamed())->toBeTrue()
+        ->and(RuntimeObservationCollector::finish())->toBeEmpty();
+
+    RuntimeObservationCollector::begin();
+    $result = $handled();
+    expect($result->response())->toBe($response);
+
+    $observations = RuntimeObservationCollector::finish();
+
+    expect($observations)->toHaveCount(1)
+        ->and($observations[0]->succeeded)->toBeTrue()
+        ->and($observations[0]->usage->inputTokens)->toBe(10)
+        ->and($observations[0]->usage->outputTokens)->toBe(2);
+});
+
 it('records a retried invocation as a separate failed and successful attempt', function (): void {
     $middleware = new BenchmarkAgentMiddleware;
     $response = new StepResponse(

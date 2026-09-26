@@ -33,6 +33,7 @@ final class BenchmarkAgentMiddleware
 
         $startedAt = hrtime(true);
         $mode = self::executionMode($step);
+        $component = RuntimeObservationCollector::component() ?? Component::Target;
 
         try {
             $result = $next($step);
@@ -51,14 +52,14 @@ final class BenchmarkAgentMiddleware
                     latencyMs: self::elapsedMilliseconds($startedAt),
                     succeeded: false,
                     mode: $mode,
-                    component: RuntimeObservationCollector::component() ?? Component::Target,
+                    component: $component,
                 ),
             );
 
             throw $exception;
         }
 
-        $result->then(function (StepResponse $response) use ($step, $startedAt, $mode): void {
+        $result->then(function (StepResponse $response) use ($step, $startedAt, $mode, $component): void {
             $endedAt = hrtime(true);
             [$effectiveProvider, $effectiveModel] = self::effectiveIdentity($response->meta);
             $driver = self::driver($step, $response->meta);
@@ -78,7 +79,7 @@ final class BenchmarkAgentMiddleware
                     succeeded: true,
                     mode: $mode,
                     providerReportedCost: self::providerReportedCost($response, $driver, $mode),
-                    component: RuntimeObservationCollector::component() ?? Component::Target,
+                    component: $component,
                 ),
             );
         });
@@ -97,6 +98,13 @@ final class BenchmarkAgentMiddleware
                 'provider' => $provider ?? $driver,
                 'model' => self::identityPart($response->meta->model) ?? 'unknown',
                 'driver' => $driver,
+                // laravel/ai 1.0 always reports an input total that includes
+                // the cached and cache-written partitions. State that semantic
+                // explicitly instead of relying on the adapter's driver
+                // inference, which predates 1.0: every pricing version that
+                // understands the key subtracts the cache partitions, so the
+                // usage() fold and the directUsage() fallback agree.
+                'inputTokenSemantic' => 'inclusive',
                 'usage' => $response->usage,
             ])->usage->toArray();
             $known = ['input_tokens', 'output_tokens', 'cached_input_tokens', 'reasoning_tokens'];
@@ -127,16 +135,16 @@ final class BenchmarkAgentMiddleware
         // laravel/ai 1.0 reports an input total that always includes cached and
         // cache-written tokens, so the uncached input is the remainder...
         $inputTokens = max(0, $usage->inputTokens
-            - $usage->cacheReadInputTokens
-            - $usage->cacheWriteInputTokens);
+            - ($usage->cacheReadInputTokens ?? 0)
+            - ($usage->cacheWriteInputTokens ?? 0));
 
         return new NormalizedUsage(
             inputTokens: $inputTokens,
             outputTokens: $usage->outputTokens,
             cachedInputTokens: $usage->cacheReadInputTokens ?? 0,
             reasoningTokens: $usage->reasoningTokens ?? 0,
-            additionalUnits: $usage->cacheWriteInputTokens > 0
-                ? ['cache_write_input_tokens' => $usage->cacheWriteInputTokens]
+            additionalUnits: ($usage->cacheWriteInputTokens ?? 0) > 0
+                ? ['cache_write_input_tokens' => $usage->cacheWriteInputTokens ?? 0]
                 : [],
         );
     }
