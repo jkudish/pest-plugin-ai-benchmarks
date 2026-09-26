@@ -34,7 +34,7 @@
     "require": {
         "php": "^8.4",
         "illuminate/contracts": "^13.0",
-        "jkudish/laravel-ai-pricing": "^0.1.0",
+        "jkudish/laravel-ai-pricing": "^0.2.0",
         "pestphp/pest": "^5.0.3",
         "pestphp/pest-plugin-evals": "^5.0.2",
         "spatie/laravel-package-tools": "^1.16"
