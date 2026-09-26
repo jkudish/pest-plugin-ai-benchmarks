@@ -24,6 +24,8 @@ use Laravel\Ai\PendingStep;
 use Laravel\Ai\Responses\Data\FinishReason;
 use Laravel\Ai\Responses\Data\Meta;
 use Laravel\Ai\Responses\Data\TextUsage;
+use Laravel\Ai\Streaming\Events\Error;
+use Laravel\Ai\Streaming\Events\TextDelta;
 
 afterEach(function (): void {
     RuntimeObservationCollector::reset();
@@ -120,7 +122,12 @@ it('folds the steps of one invocation into a single observation', function (): v
     RuntimeObservationCollector::begin();
 
     settle($middleware->handle(benchmarkStep(number: 0), fn (): StepResult => new StepResult($first)));
-    usleep(1500);
+    // A plain usleep can undershoot the measured wall clock (seen on the
+    // Windows prefer-stable lane), so hold a real hrtime deadline instead.
+    $deadline = hrtime(true) + 1_500_000;
+    while (hrtime(true) < $deadline) {
+        usleep(100);
+    }
     settle($middleware->handle(benchmarkStep(number: 1), fn (): StepResult => new StepResult($second)));
 
     $observations = RuntimeObservationCollector::finish();
@@ -313,6 +320,206 @@ it('defers recording a generator-backed step result until the stream resolves', 
         ->and($observations[0]->succeeded)->toBeTrue()
         ->and($observations[0]->usage->inputTokens)->toBe(10)
         ->and($observations[0]->usage->outputTokens)->toBe(2);
+});
+
+it('records a failed observation when a streamed step throws mid-stream and rethrows', function (): void {
+    $step = benchmarkStep(model: 'primary-model');
+    $failure = new RuntimeException('Stream died mid-flight.');
+    $delta = new TextDelta(id: 'evt-1', messageId: 'msg-1', delta: 'partial', timestamp: 1);
+
+    RuntimeObservationCollector::begin();
+
+    $result = (new BenchmarkAgentMiddleware)->handle($step, fn (): StepResult => new StepResult(
+        (static function () use ($delta, $failure): Generator {
+            yield $delta;
+
+            throw $failure;
+        })(),
+    ));
+
+    $received = [];
+    $rethrown = null;
+
+    try {
+        foreach ($result as $event) {
+            $received[] = $event;
+        }
+    } catch (RuntimeException $exception) {
+        $rethrown = $exception;
+    }
+
+    $observations = RuntimeObservationCollector::finish();
+
+    expect($rethrown)->toBe($failure)
+        ->and($received)->toBe([$delta])
+        ->and($observations)->toHaveCount(1)
+        ->and($observations[0]->requestedProvider)->toBe('openrouter')
+        ->and($observations[0]->requestedModel)->toBe('primary-model')
+        ->and($observations[0]->effectiveProvider)->toBeNull()
+        ->and($observations[0]->effectiveModel)->toBeNull()
+        ->and($observations[0]->usage->toArray())->toBe([
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+            'cached_input_tokens' => 0,
+            'reasoning_tokens' => 0,
+        ])
+        ->and($observations[0]->succeeded)->toBeFalse();
+});
+
+it('records a failed observation when a stream ends with an error event', function (): void {
+    $step = benchmarkStep(model: 'primary-model');
+    $error = new Error(
+        id: 'evt-1',
+        type: 'error',
+        message: 'Provider overloaded.',
+        recoverable: false,
+        timestamp: 1,
+    );
+
+    RuntimeObservationCollector::begin();
+
+    $result = (new BenchmarkAgentMiddleware)->handle($step, fn (): StepResult => new StepResult(
+        (static function () use ($error): Generator {
+            yield $error;
+        })(),
+    ));
+
+    $received = [];
+
+    foreach ($result as $event) {
+        $received[] = $event;
+    }
+
+    $observations = RuntimeObservationCollector::finish();
+
+    // The loop resolves the stream without a response, so then() never fires;
+    // the middleware must record the attempt before the loop throws its
+    // StreamErrorException.
+    expect($received)->toBe([$error])
+        ->and($result->response())->toBeNull()
+        ->and($observations)->toHaveCount(1)
+        ->and($observations[0]->requestedProvider)->toBe('openrouter')
+        ->and($observations[0]->requestedModel)->toBe('primary-model')
+        ->and($observations[0]->effectiveProvider)->toBeNull()
+        ->and($observations[0]->effectiveModel)->toBeNull()
+        ->and($observations[0]->usage->toArray())->toBe([
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+            'cached_input_tokens' => 0,
+            'reasoning_tokens' => 0,
+        ])
+        ->and($observations[0]->succeeded)->toBeFalse();
+});
+
+it('records a successful streamed step exactly once with the same usage as a non-streamed step', function (): void {
+    $middleware = new BenchmarkAgentMiddleware;
+    $response = new StepResponse(
+        text: 'ok',
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(
+            inputTokens: 120,
+            outputTokens: 30,
+            cacheReadInputTokens: 20,
+            cacheWriteInputTokens: 15,
+            reasoningTokens: 10,
+        ),
+        meta: new Meta(provider: 'google', model: 'gemini-effective'),
+    );
+    $streamed = fn (): StepResult => $middleware->handle(benchmarkStep(), fn (): StepResult => new StepResult(
+        (static function () use ($response): Generator {
+            yield new TextDelta(id: 'evt-1', messageId: 'msg-1', delta: 'ok', timestamp: 1);
+
+            return $response;
+        })(),
+    ));
+
+    RuntimeObservationCollector::begin();
+
+    $result = $streamed();
+    $received = [];
+
+    foreach ($result as $event) {
+        $received[] = $event;
+    }
+
+    // Re-reading the resolved response must not record the step twice.
+    expect($result->response())->toBe($response)
+        ->and($result->response())->toBe($response);
+
+    $observations = RuntimeObservationCollector::finish();
+
+    RuntimeObservationCollector::begin();
+    settle($middleware->handle(benchmarkStep(), fn (): StepResult => new StepResult($response)));
+    $nonStreamed = RuntimeObservationCollector::finish();
+
+    expect($received)->toHaveCount(1)
+        ->and($observations)->toHaveCount(1)
+        ->and($nonStreamed)->toHaveCount(1)
+        ->and($observations[0]->succeeded)->toBeTrue()
+        ->and($observations[0]->usage->toArray())->toBe($nonStreamed[0]->usage->toArray())
+        ->and($observations[0]->usage->toArray())->toBe([
+            'input_tokens' => 85,
+            'output_tokens' => 30,
+            'cached_input_tokens' => 20,
+            'reasoning_tokens' => 10,
+            'cache_write_input_tokens' => 15,
+        ]);
+});
+
+it('keeps a streamed failed attempt as its own row when failover retries the invocation', function (): void {
+    $middleware = new BenchmarkAgentMiddleware;
+    $failure = new RuntimeException('Stream died mid-flight.');
+    $response = new StepResponse(
+        text: 'ok',
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 12, outputTokens: 4),
+        meta: new Meta(provider: 'fail-backup', model: 'backup/model-b'),
+    );
+    $failing = fn (): StepResult => new StepResult((static function () use ($failure): Generator {
+        yield new TextDelta(id: 'evt-1', messageId: 'msg-1', delta: 'partial', timestamp: 1);
+
+        throw $failure;
+    })());
+    $succeeding = fn (): StepResult => new StepResult((static function () use ($response): Generator {
+        yield new TextDelta(id: 'evt-2', messageId: 'msg-2', delta: 'ok', timestamp: 2);
+
+        return $response;
+    })());
+
+    RuntimeObservationCollector::begin();
+
+    try {
+        foreach ($middleware->handle(
+            benchmarkStep(provider: 'fail-primary', model: 'primary/model-a', invocationId: 'shared'),
+            $failing,
+        ) as $event) {
+            //
+        }
+    } catch (RuntimeException) {
+        // The invocation failed over; the backup attempt runs below.
+    }
+
+    settle($middleware->handle(
+        benchmarkStep(provider: 'fail-backup', model: 'backup/model-b', invocationId: 'shared'),
+        $succeeding,
+    ));
+
+    $observations = RuntimeObservationCollector::finish();
+
+    // The failed streamed attempt opens its own row and the failover retry is
+    // a separate successful attempt, exactly like the non-streamed path.
+    expect($observations)->toHaveCount(2)
+        ->and($observations[0]->requestedProvider)->toBe('fail-primary')
+        ->and($observations[0]->requestedModel)->toBe('primary/model-a')
+        ->and($observations[0]->succeeded)->toBeFalse()
+        ->and($observations[0]->usage->inputTokens)->toBe(0)
+        ->and($observations[1]->requestedProvider)->toBe('fail-backup')
+        ->and($observations[1]->requestedModel)->toBe('backup/model-b')
+        ->and($observations[1]->succeeded)->toBeTrue()
+        ->and($observations[1]->usage->inputTokens)->toBe(12)
+        ->and($observations[1]->usage->outputTokens)->toBe(4);
 });
 
 it('records a retried invocation as a separate failed and successful attempt', function (): void {
