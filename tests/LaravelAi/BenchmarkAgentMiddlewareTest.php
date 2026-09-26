@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use GuzzleHttp\Psr7\Response as Psr7Response;
-use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\Response as HttpResponse;
 use Illuminate\Support\Facades\Event;
@@ -16,38 +15,58 @@ use Jkudish\PestAiBenchmarks\Tests\LaravelAi\Fixtures\BenchmarkedAgent;
 use Laravel\Ai\AiManager;
 use Laravel\Ai\AiServiceProvider;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Contracts\Providers\TextProvider;
 use Laravel\Ai\Events\AgentFailed;
 use Laravel\Ai\Events\AgentFailedOver;
-use Laravel\Ai\Prompts\AgentPrompt;
-use Laravel\Ai\Providers\OpenRouterProvider;
-use Laravel\Ai\Responses\AgentResponse;
+use Laravel\Ai\Gateway\StepResponse;
+use Laravel\Ai\Gateway\StepResult;
+use Laravel\Ai\Gateway\TextGenerationOptions;
+use Laravel\Ai\PendingStep;
+use Laravel\Ai\Responses\Data\FinishReason;
 use Laravel\Ai\Responses\Data\Meta;
-use Laravel\Ai\Responses\Data\Usage;
+use Laravel\Ai\Responses\Data\TextUsage;
 
 afterEach(function (): void {
     RuntimeObservationCollector::reset();
 });
 
-it('captures truthful Laravel AI identity usage and latency during an active benchmark', function (): void {
-    $provider = Mockery::mock(TextProvider::class);
-    $provider->shouldReceive('name')->once()->andReturn('openrouter');
-    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
-    $prompt = new AgentPrompt(
-        agent: Mockery::mock(Agent::class),
-        prompt: 'Extract this receipt.',
-        attachments: [],
+function benchmarkStep(?Agent $agent = null, int $number = 0, string $provider = 'openrouter', string $model = 'router/requested-model', ?string $invocationId = 'invocation-1'): PendingStep
+{
+    return new PendingStep(
+        number: $number,
+        isFinalStep: true,
         provider: $provider,
-        model: 'router/requested-model',
+        model: $model,
+        instructions: null,
+        messages: [],
+        tools: [],
+        schema: null,
+        options: $agent === null ? null : new TextGenerationOptions(agent: $agent),
+        invocationId: $invocationId,
     );
-    $response = new AgentResponse(
-        invocationId: 'invocation-1',
+}
+
+/**
+ * @template T of StepResponse
+ *
+ * @param  T  $response
+ * @return T
+ */
+function settle(StepResult $result): StepResponse
+{
+    return $result->response();
+}
+
+it('captures truthful Laravel AI identity usage and latency during an active benchmark', function (): void {
+    $step = benchmarkStep();
+    $response = new StepResponse(
         text: '{"merchant":"Acme"}',
-        usage: new Usage(
-            promptTokens: 120,
-            completionTokens: 30,
-            cacheWriteInputTokens: 15,
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(
+            inputTokens: 120,
+            outputTokens: 30,
             cacheReadInputTokens: 20,
+            cacheWriteInputTokens: 15,
             reasoningTokens: 10,
         ),
         meta: new Meta(provider: 'google', model: 'gemini-effective'),
@@ -55,11 +74,11 @@ it('captures truthful Laravel AI identity usage and latency during an active ben
 
     RuntimeObservationCollector::begin();
 
-    $actual = (new BenchmarkAgentMiddleware)->handle($prompt, function (AgentPrompt $handled) use ($prompt, $response): AgentResponse {
-        expect($handled)->toBe($prompt);
+    $actual = settle((new BenchmarkAgentMiddleware)->handle($step, function (PendingStep $handled) use ($step, $response): StepResult {
+        expect($handled)->toBe($step);
 
-        return $response;
-    });
+        return new StepResult($response);
+    }));
 
     $observations = RuntimeObservationCollector::finish();
 
@@ -80,46 +99,98 @@ it('captures truthful Laravel AI identity usage and latency during an active ben
         ->and($observations[0]->succeeded)->toBeTrue();
 });
 
-it('records observations under the active scorecard component', function (): void {
-    $provider = Mockery::mock(TextProvider::class);
-    $provider->shouldReceive('name')->once()->andReturn('openrouter');
-    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
-    $prompt = new AgentPrompt(
-        agent: Mockery::mock(Agent::class),
-        prompt: 'Judge this output.',
-        attachments: [],
-        provider: $provider,
-        model: 'judge/model',
+it('folds the steps of one invocation into a single observation', function (): void {
+    $middleware = new BenchmarkAgentMiddleware;
+
+    $first = new StepResponse(
+        text: 'searching',
+        toolCalls: [],
+        finishReason: FinishReason::ToolCalls,
+        usage: new TextUsage(inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 30, cacheWriteInputTokens: 10),
+        meta: new Meta(provider: 'google', model: 'gemini-effective'),
     );
-    $response = new AgentResponse(
-        invocationId: 'invocation-judge',
+    $second = new StepResponse(
+        text: '{"merchant":"Acme"}',
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 200, outputTokens: 20),
+        meta: new Meta(provider: 'google', model: 'gemini-effective'),
+    );
+
+    RuntimeObservationCollector::begin();
+
+    settle($middleware->handle(benchmarkStep(number: 0), fn (): StepResult => new StepResult($first)));
+    usleep(1500);
+    settle($middleware->handle(benchmarkStep(number: 1), fn (): StepResult => new StepResult($second)));
+
+    $observations = RuntimeObservationCollector::finish();
+
+    expect($observations)->toHaveCount(1)
+        ->and($observations[0]->usage->toArray())->toBe([
+            // Both steps report inclusive input totals, so each contributes its
+            // uncached remainder (100 - 30 - 10 and 200 - 0 - 0)...
+            'input_tokens' => 260,
+            'output_tokens' => 30,
+            'cached_input_tokens' => 30,
+            'reasoning_tokens' => 0,
+            'cache_write_input_tokens' => 10,
+        ])
+        ->and($observations[0]->succeeded)->toBeTrue()
+        // The latency spans the whole invocation, including time between steps.
+        ->and($observations[0]->latencyMs)->toBeGreaterThanOrEqual(1.5);
+});
+
+it('keeps separate invocations and interleaved sub-agents apart', function (): void {
+    $middleware = new BenchmarkAgentMiddleware;
+    $response = new StepResponse(
+        text: 'ok',
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 5, outputTokens: 1),
+        meta: new Meta(provider: 'google', model: 'gemini-effective'),
+    );
+
+    RuntimeObservationCollector::begin();
+
+    settle($middleware->handle(benchmarkStep(number: 0, invocationId: 'parent'), fn (): StepResult => new StepResult($response)));
+    settle($middleware->handle(benchmarkStep(number: 0, provider: 'openai', model: 'child/model', invocationId: 'child'), fn (): StepResult => new StepResult($response)));
+    settle($middleware->handle(benchmarkStep(number: 1, invocationId: 'parent'), fn (): StepResult => new StepResult($response)));
+
+    $observations = RuntimeObservationCollector::finish();
+
+    expect($observations)->toHaveCount(2)
+        ->and($observations[0]->requestedProvider)->toBe('openrouter')
+        ->and($observations[0]->requestedModel)->toBe('router/requested-model')
+        ->and($observations[0]->usage->inputTokens)->toBe(10)
+        ->and($observations[1]->requestedProvider)->toBe('openai')
+        ->and($observations[1]->requestedModel)->toBe('child/model')
+        ->and($observations[1]->usage->inputTokens)->toBe(5);
+});
+
+it('records observations under the active scorecard component', function (): void {
+    $step = benchmarkStep(model: 'judge/model');
+    $response = new StepResponse(
         text: 'pass',
-        usage: new Usage(promptTokens: 10, completionTokens: 2),
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 10, outputTokens: 2),
         meta: new Meta(provider: 'openrouter', model: 'judge/model'),
     );
 
     RuntimeObservationCollector::begin(Component::Judge);
-    (new BenchmarkAgentMiddleware)->handle($prompt, fn (): AgentResponse => $response);
+    settle((new BenchmarkAgentMiddleware)->handle($step, fn (): StepResult => new StepResult($response)));
 
     expect(RuntimeObservationCollector::finish()[0]->component)->toBe(Component::Judge);
 });
 
 it('records failed attempts and rethrows the original exception', function (): void {
-    $provider = Mockery::mock(TextProvider::class);
-    $provider->shouldReceive('name')->once()->andReturn('openrouter');
-    $prompt = new AgentPrompt(
-        agent: Mockery::mock(Agent::class),
-        prompt: 'Classify this receipt.',
-        attachments: [],
-        provider: $provider,
-        model: 'primary-model',
-    );
+    $step = benchmarkStep(model: 'primary-model');
     $failure = new RuntimeException('Provider timed out.');
 
     RuntimeObservationCollector::begin();
 
     try {
-        (new BenchmarkAgentMiddleware)->handle($prompt, fn (): never => throw $failure);
+        (new BenchmarkAgentMiddleware)->handle($step, fn (): never => throw $failure);
     } catch (RuntimeException $exception) {
         expect($exception)->toBe($failure);
     }
@@ -138,29 +209,52 @@ it('records failed attempts and rethrows the original exception', function (): v
         ->and($observations[0]->succeeded)->toBeFalse();
 });
 
-it('is inert outside an active benchmark and tolerates incomplete response metadata', function (): void {
-    $provider = Mockery::mock(TextProvider::class);
-    $provider->shouldReceive('name')->once()->andReturn('openrouter');
-    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
-    $prompt = new AgentPrompt(
-        agent: Mockery::mock(Agent::class),
-        prompt: 'Extract this receipt.',
-        attachments: [],
-        provider: $provider,
-        model: 'requested-model',
-    );
-    $response = new AgentResponse(
-        invocationId: 'invocation-2',
+it('records a retried invocation as a separate failed and successful attempt', function (): void {
+    $middleware = new BenchmarkAgentMiddleware;
+    $response = new StepResponse(
         text: 'ok',
-        usage: new Usage,
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 12, outputTokens: 4),
+        meta: new Meta(provider: 'fail-backup', model: 'backup/model-b'),
+    );
+    $failure = new RuntimeException('Provider timed out.');
+
+    RuntimeObservationCollector::begin();
+
+    try {
+        $middleware->handle(benchmarkStep(provider: 'fail-primary', model: 'primary/model-a', invocationId: 'shared'), fn (): never => throw $failure);
+    } catch (RuntimeException) {
+        // Retried below.
+    }
+
+    settle($middleware->handle(benchmarkStep(provider: 'fail-backup', model: 'backup/model-b', invocationId: 'shared'), fn (): StepResult => new StepResult($response)));
+
+    $observations = RuntimeObservationCollector::finish();
+
+    expect($observations)->toHaveCount(2)
+        ->and($observations[0]->requestedProvider)->toBe('fail-primary')
+        ->and($observations[0]->succeeded)->toBeFalse()
+        ->and($observations[1]->requestedProvider)->toBe('fail-backup')
+        ->and($observations[1]->succeeded)->toBeTrue()
+        ->and($observations[1]->usage->inputTokens)->toBe(12);
+});
+
+it('is inert outside an active benchmark and tolerates incomplete response metadata', function (): void {
+    $step = benchmarkStep(model: 'requested-model');
+    $response = new StepResponse(
+        text: 'ok',
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage,
         meta: new Meta(provider: 'google'),
     );
 
-    expect((new BenchmarkAgentMiddleware)->handle($prompt, fn (): AgentResponse => $response))->toBe($response)
+    expect(settle((new BenchmarkAgentMiddleware)->handle($step, fn (): StepResult => new StepResult($response))))->toBe($response)
         ->and(RuntimeObservationCollector::finish())->toBe([]);
 
     RuntimeObservationCollector::begin();
-    (new BenchmarkAgentMiddleware)->handle($prompt, fn (): AgentResponse => $response);
+    settle((new BenchmarkAgentMiddleware)->handle($step, fn (): StepResult => new StepResult($response)));
     $observations = RuntimeObservationCollector::finish();
 
     expect($observations)->toHaveCount(1)
@@ -169,21 +263,13 @@ it('is inert outside an active benchmark and tolerates incomplete response metad
 });
 
 it('marks Laravel AI fake gateway observations as simulated', function (): void {
-    $provider = Mockery::mock(TextProvider::class);
-    $provider->shouldReceive('name')->once()->andReturn('openrouter');
-    $provider->shouldReceive('driver')->once()->andReturn('openrouter');
     $agent = Mockery::mock(Agent::class);
-    $prompt = new AgentPrompt(
-        agent: $agent,
-        prompt: 'Extract this receipt.',
-        attachments: [],
-        provider: $provider,
-        model: 'requested-model',
-    );
-    $response = new AgentResponse(
-        invocationId: 'invocation-fake',
+    $step = benchmarkStep(agent: $agent);
+    $response = new StepResponse(
         text: 'ok',
-        usage: new Usage(promptTokens: 10, completionTokens: 2),
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 10, outputTokens: 2),
         meta: new Meta(provider: 'openrouter', model: 'effective-model'),
     );
 
@@ -192,7 +278,7 @@ it('marks Laravel AI fake gateway observations as simulated', function (): void 
     $this->app->instance(AiManager::class, $manager);
 
     RuntimeObservationCollector::begin();
-    (new BenchmarkAgentMiddleware)->handle($prompt, fn (): AgentResponse => $response);
+    settle((new BenchmarkAgentMiddleware)->handle($step, fn (): StepResult => new StepResult($response)));
     $observations = RuntimeObservationCollector::finish();
 
     expect($observations)->toHaveCount(1)
@@ -200,21 +286,18 @@ it('marks Laravel AI fake gateway observations as simulated', function (): void 
 });
 
 it('captures authoritative provider cost from a synchronous OpenRouter response', function (): void {
-    $provider = new OpenRouterProvider(
-        config: ['name' => 'router-alias', 'driver' => 'openrouter', 'key' => 'test-key'],
-        events: $this->app->make(Dispatcher::class),
-    );
-    $prompt = new AgentPrompt(
-        agent: Mockery::mock(Agent::class),
-        prompt: 'Extract this receipt.',
-        attachments: [],
-        provider: $provider,
-        model: 'openai/gpt-test',
-    );
-    $response = (new AgentResponse(
-        invocationId: 'invocation-cost',
+    $this->app->register(AiServiceProvider::class);
+
+    config([
+        'ai.providers.router-alias' => ['name' => 'router-alias', 'driver' => 'openrouter', 'key' => 'test-key'],
+    ]);
+
+    $step = benchmarkStep(provider: 'router-alias', model: 'openai/gpt-test');
+    $response = (new StepResponse(
         text: 'ok',
-        usage: new Usage(promptTokens: 10, completionTokens: 2),
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 10, outputTokens: 2),
         meta: new Meta(provider: 'router-alias', model: 'openai/gpt-test'),
     ))->withRawResponse(new HttpResponse(new Psr7Response(
         body: json_encode(['usage' => ['cost' => 0.0000042]], JSON_THROW_ON_ERROR),
@@ -222,7 +305,7 @@ it('captures authoritative provider cost from a synchronous OpenRouter response'
     )));
 
     RuntimeObservationCollector::begin();
-    (new BenchmarkAgentMiddleware)->handle($prompt, fn (): AgentResponse => $response);
+    settle((new BenchmarkAgentMiddleware)->handle($step, fn (): StepResult => new StepResult($response)));
     $observation = RuntimeObservationCollector::finish()[0];
 
     expect($observation->providerReportedCost?->toArray())->toBe([
@@ -231,26 +314,54 @@ it('captures authoritative provider cost from a synchronous OpenRouter response'
     ]);
 });
 
-it('does not fail a successful benchmark when provider pricing metadata is malformed', function (): void {
-    $provider = Mockery::mock(TextProvider::class);
-    $provider->shouldReceive('name')->once()->andReturn('custom');
-    $provider->shouldReceive('driver')->once()->andThrow(new RuntimeException('Malformed driver configuration.'));
-    $prompt = new AgentPrompt(
-        agent: Mockery::mock(Agent::class),
-        prompt: 'Extract this receipt.',
-        attachments: [],
-        provider: $provider,
-        model: 'model',
-    );
-    $response = new AgentResponse(
-        invocationId: 'invocation-malformed-pricing',
+it('sums the provider-reported cost across the steps of one invocation', function (): void {
+    $this->app->register(AiServiceProvider::class);
+
+    config([
+        'ai.providers.router-alias' => ['name' => 'router-alias', 'driver' => 'openrouter', 'key' => 'test-key'],
+    ]);
+
+    $middleware = new BenchmarkAgentMiddleware;
+    $costed = fn (float $cost): StepResponse => (new StepResponse(
         text: 'ok',
-        usage: new Usage(promptTokens: 10, completionTokens: 2),
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 10, outputTokens: 2),
+        meta: new Meta(provider: 'router-alias', model: 'openai/gpt-test'),
+    ))->withRawResponse(new HttpResponse(new Psr7Response(
+        body: json_encode(['usage' => ['cost' => $cost]], JSON_THROW_ON_ERROR),
+        headers: ['Content-Type' => 'application/json'],
+    )));
+
+    RuntimeObservationCollector::begin();
+
+    settle($middleware->handle(benchmarkStep(provider: 'router-alias'), fn (): StepResult => new StepResult($costed(0.1))));
+    settle($middleware->handle(benchmarkStep(provider: 'router-alias', number: 1), fn (): StepResult => new StepResult($costed(0.2))));
+
+    $observation = RuntimeObservationCollector::finish()[0];
+
+    expect($observation->providerReportedCost?->toArray())->toBe([
+        'amount' => '0.3',
+        'currency' => 'USD',
+    ]);
+});
+
+it('does not fail a successful benchmark when provider pricing metadata is malformed', function (): void {
+    $step = benchmarkStep(provider: 'custom', model: 'model');
+    $response = new StepResponse(
+        text: 'ok',
+        toolCalls: [],
+        finishReason: FinishReason::Stop,
+        usage: new TextUsage(inputTokens: 10, outputTokens: 2),
         meta: new Meta(provider: 'custom', model: 'model'),
     );
 
+    $manager = Mockery::mock(AiManager::class);
+    $manager->shouldReceive('textProvider')->andThrow(new RuntimeException('Malformed driver configuration.'));
+    $this->app->instance(AiManager::class, $manager);
+
     RuntimeObservationCollector::begin();
-    $actual = (new BenchmarkAgentMiddleware)->handle($prompt, fn (): AgentResponse => $response);
+    $actual = settle((new BenchmarkAgentMiddleware)->handle($step, fn (): StepResult => new StepResult($response)));
     $observation = RuntimeObservationCollector::finish()[0];
 
     expect($actual)->toBe($response)

@@ -13,59 +13,80 @@ use Jkudish\PestAiBenchmarks\Measurements\NormalizedUsage;
 use Jkudish\PestAiBenchmarks\Scorecards\Component;
 use Jkudish\PestAiBenchmarks\Scorecards\ExecutionMode;
 use Laravel\Ai\AiManager;
-use Laravel\Ai\Prompts\AgentPrompt;
-use Laravel\Ai\Responses\AgentResponse;
+use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Gateway\StepResponse;
+use Laravel\Ai\Gateway\StepResult;
+use Laravel\Ai\PendingStep;
+use Laravel\Ai\Responses\Data\Meta;
 use Throwable;
 
 final class BenchmarkAgentMiddleware
 {
-    /** @param Closure(AgentPrompt): AgentResponse $next */
-    public function handle(AgentPrompt $prompt, Closure $next): AgentResponse
+    /**
+     * @param  Closure(PendingStep): StepResult  $next
+     */
+    public function handle(PendingStep $step, Closure $next): StepResult
     {
         if (! RuntimeObservationCollector::active()) {
-            return $next($prompt);
+            return $next($step);
         }
 
         $startedAt = hrtime(true);
-        $mode = self::executionMode($prompt);
+        $mode = self::executionMode($step);
 
         try {
-            $response = $next($prompt);
-            [$effectiveProvider, $effectiveModel] = self::effectiveIdentity($response);
-            $driver = self::driver($prompt, $response);
-
-            RuntimeObservationCollector::record(new AgentObservation(
-                requestedProvider: $prompt->provider()->name(),
-                requestedModel: $prompt->model,
-                effectiveProvider: $effectiveProvider,
-                effectiveModel: $effectiveModel,
-                usage: self::usage($response, $driver),
-                latencyMs: self::elapsedMilliseconds($startedAt),
-                succeeded: true,
-                mode: $mode,
-                providerReportedCost: self::providerReportedCost($response, $driver, $mode),
-                component: RuntimeObservationCollector::component() ?? Component::Target,
-            ));
-
-            return $response;
+            $result = $next($step);
         } catch (Throwable $exception) {
-            RuntimeObservationCollector::record(new AgentObservation(
-                requestedProvider: $prompt->provider()->name(),
-                requestedModel: $prompt->model,
-                effectiveProvider: null,
-                effectiveModel: null,
-                usage: new NormalizedUsage,
-                latencyMs: self::elapsedMilliseconds($startedAt),
-                succeeded: false,
-                mode: $mode,
-                component: RuntimeObservationCollector::component() ?? Component::Target,
-            ));
+            RuntimeObservationCollector::recordStep(
+                invocationId: $step->invocationId,
+                isFirstStep: $step->isFirstStep(),
+                startedAt: $startedAt,
+                endedAt: hrtime(true),
+                observation: new AgentObservation(
+                    requestedProvider: $step->provider,
+                    requestedModel: $step->model,
+                    effectiveProvider: null,
+                    effectiveModel: null,
+                    usage: new NormalizedUsage,
+                    latencyMs: self::elapsedMilliseconds($startedAt),
+                    succeeded: false,
+                    mode: $mode,
+                    component: RuntimeObservationCollector::component() ?? Component::Target,
+                ),
+            );
 
             throw $exception;
         }
+
+        $result->then(function (StepResponse $response) use ($step, $startedAt, $mode): void {
+            $endedAt = hrtime(true);
+            [$effectiveProvider, $effectiveModel] = self::effectiveIdentity($response->meta);
+            $driver = self::driver($step, $response->meta);
+
+            RuntimeObservationCollector::recordStep(
+                invocationId: $step->invocationId,
+                isFirstStep: $step->isFirstStep(),
+                startedAt: $startedAt,
+                endedAt: $endedAt,
+                observation: new AgentObservation(
+                    requestedProvider: $step->provider,
+                    requestedModel: $step->model,
+                    effectiveProvider: $effectiveProvider,
+                    effectiveModel: $effectiveModel,
+                    usage: self::usage($response, $driver),
+                    latencyMs: self::elapsedMilliseconds($startedAt, $endedAt),
+                    succeeded: true,
+                    mode: $mode,
+                    providerReportedCost: self::providerReportedCost($response, $driver, $mode),
+                    component: RuntimeObservationCollector::component() ?? Component::Target,
+                ),
+            );
+        });
+
+        return $result;
     }
 
-    private static function usage(AgentResponse $response, string $driver): NormalizedUsage
+    private static function usage(StepResponse $response, string $driver): NormalizedUsage
     {
         try {
             $provider = self::identityPart($response->meta->provider);
@@ -99,37 +120,47 @@ final class BenchmarkAgentMiddleware
         }
     }
 
-    private static function directUsage(AgentResponse $response): NormalizedUsage
+    private static function directUsage(StepResponse $response): NormalizedUsage
     {
-        $cacheWriteInputTokens = $response->usage->cacheWriteInputTokens;
+        $usage = $response->usage;
+
+        // laravel/ai 1.0 reports an input total that always includes cached and
+        // cache-written tokens, so the uncached input is the remainder...
+        $inputTokens = max(0, $usage->inputTokens
+            - $usage->cacheReadInputTokens
+            - $usage->cacheWriteInputTokens);
 
         return new NormalizedUsage(
-            inputTokens: $response->usage->promptTokens,
-            outputTokens: $response->usage->completionTokens,
-            cachedInputTokens: $response->usage->cacheReadInputTokens,
-            reasoningTokens: $response->usage->reasoningTokens,
-            additionalUnits: $cacheWriteInputTokens > 0
-                ? ['cache_write_input_tokens' => $cacheWriteInputTokens]
+            inputTokens: $inputTokens,
+            outputTokens: $usage->outputTokens,
+            cachedInputTokens: $usage->cacheReadInputTokens ?? 0,
+            reasoningTokens: $usage->reasoningTokens ?? 0,
+            additionalUnits: $usage->cacheWriteInputTokens > 0
+                ? ['cache_write_input_tokens' => $usage->cacheWriteInputTokens]
                 : [],
         );
     }
 
-    private static function driver(AgentPrompt $prompt, AgentResponse $response): string
+    private static function driver(PendingStep $step, Meta $meta): string
     {
         try {
-            $driver = trim($prompt->provider()->driver());
+            $container = Container::getInstance();
 
-            if ($driver !== '') {
-                return $driver;
+            if ($container->bound(AiManager::class)) {
+                $driver = trim($container->make(AiManager::class)->textProvider($step->provider)->driver());
+
+                if ($driver !== '') {
+                    return $driver;
+                }
             }
         } catch (Throwable) {
             // Pricing instrumentation must not replace a successful provider response.
         }
 
-        return self::identityPart($response->meta->provider) ?? 'unknown';
+        return self::identityPart($meta->provider) ?? 'unknown';
     }
 
-    private static function providerReportedCost(AgentResponse $response, string $driver, ExecutionMode $mode): ?Money
+    private static function providerReportedCost(StepResponse $response, string $driver, ExecutionMode $mode): ?Money
     {
         if ($mode !== ExecutionMode::Live) {
             return null;
@@ -148,10 +179,10 @@ final class BenchmarkAgentMiddleware
     }
 
     /** @return array{0: string|null, 1: string|null} */
-    private static function effectiveIdentity(AgentResponse $response): array
+    private static function effectiveIdentity(Meta $meta): array
     {
-        $provider = self::identityPart($response->meta->provider);
-        $model = self::identityPart($response->meta->model);
+        $provider = self::identityPart($meta->provider);
+        $model = self::identityPart($meta->model);
 
         return $provider !== null && $model !== null
             ? [$provider, $model]
@@ -163,20 +194,26 @@ final class BenchmarkAgentMiddleware
         return $value !== null && trim($value) !== '' ? $value : null;
     }
 
-    private static function elapsedMilliseconds(int $startedAt): float
+    private static function elapsedMilliseconds(int $startedAt, ?int $endedAt = null): float
     {
-        return (hrtime(true) - $startedAt) / 1_000_000;
+        return (($endedAt ?? hrtime(true)) - $startedAt) / 1_000_000;
     }
 
-    private static function executionMode(AgentPrompt $prompt): ExecutionMode
+    private static function executionMode(PendingStep $step): ExecutionMode
     {
+        $agent = $step->options?->agent;
+
+        if (! $agent instanceof Agent) {
+            return ExecutionMode::Live;
+        }
+
         $container = Container::getInstance();
 
         if (! $container->bound(AiManager::class)) {
             return ExecutionMode::Live;
         }
 
-        return $container->make(AiManager::class)->hasFakeGatewayFor($prompt->agent)
+        return $container->make(AiManager::class)->hasFakeGatewayFor($agent)
             ? ExecutionMode::Simulated
             : ExecutionMode::Live;
     }
