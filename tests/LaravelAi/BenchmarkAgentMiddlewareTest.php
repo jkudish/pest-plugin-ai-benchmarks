@@ -17,6 +17,7 @@ use Laravel\Ai\AiServiceProvider;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Events\AgentFailed;
 use Laravel\Ai\Events\AgentFailedOver;
+use Laravel\Ai\Exceptions\StreamErrorException;
 use Laravel\Ai\Gateway\StepResponse;
 use Laravel\Ai\Gateway\StepResult;
 use Laravel\Ai\Gateway\TextGenerationOptions;
@@ -25,6 +26,7 @@ use Laravel\Ai\Responses\Data\FinishReason;
 use Laravel\Ai\Responses\Data\Meta;
 use Laravel\Ai\Responses\Data\TextUsage;
 use Laravel\Ai\Streaming\Events\Error;
+use Laravel\Ai\Streaming\Events\StreamEvent;
 use Laravel\Ai\Streaming\Events\TextDelta;
 
 afterEach(function (): void {
@@ -242,6 +244,50 @@ it('folds a failed non-first step into its attempt with the earlier steps usage'
     // The attempt stays a single observation: the failed step marks it failed
     // without discarding the usage the earlier step already reported.
     expect($observations)->toHaveCount(1)
+        ->and($observations[0]->succeeded)->toBeFalse()
+        ->and($observations[0]->usage->inputTokens)->toBe(100)
+        ->and($observations[0]->usage->outputTokens)->toBe(10);
+});
+
+it('folds a streamed non-first-step failure into its attempt with the earlier steps usage', function (): void {
+    $middleware = new BenchmarkAgentMiddleware;
+    $first = new StepResponse(
+        text: 'searching',
+        toolCalls: [],
+        finishReason: FinishReason::ToolCalls,
+        usage: new TextUsage(inputTokens: 100, outputTokens: 10),
+        meta: new Meta(provider: 'google', model: 'gemini-effective'),
+    );
+    $failure = new RuntimeException('Stream died mid-flight.');
+
+    RuntimeObservationCollector::begin();
+
+    settle($middleware->handle(benchmarkStep(number: 0), fn (): StepResult => new StepResult($first)));
+
+    $result = $middleware->handle(benchmarkStep(number: 1), fn (): StepResult => new StepResult(
+        (static function () use ($failure): Generator {
+            yield new TextDelta(id: 'evt-1', messageId: 'msg-1', delta: 'partial', timestamp: 1);
+
+            throw $failure;
+        })(),
+    ));
+
+    $rethrown = null;
+
+    try {
+        foreach ($result as $event) {
+            //
+        }
+    } catch (RuntimeException $exception) {
+        $rethrown = $exception;
+    }
+
+    $observations = RuntimeObservationCollector::finish();
+
+    // The attempt stays a single failed observation: the streamed failure
+    // folds into it without discarding the usage the earlier step reported.
+    expect($rethrown)->toBe($failure)
+        ->and($observations)->toHaveCount(1)
         ->and($observations[0]->succeeded)->toBeFalse()
         ->and($observations[0]->usage->inputTokens)->toBe(100)
         ->and($observations[0]->usage->outputTokens)->toBe(10);
@@ -748,6 +794,133 @@ it('observes each attempt of a native Laravel AI failover prompt with stubbed tr
         Http::assertSent(fn (Request $request): bool => $request['model'] === $model
             && str_contains($request->body(), 'Extract this receipt.'));
     }
+});
+
+it('records the failed attempt before StreamErrorException when an agent stream ends with an error event', function (): void {
+    $this->app->register(AiServiceProvider::class);
+
+    config([
+        'ai.providers.stream-error' => ['driver' => 'openrouter', 'key' => 'test-key'],
+    ]);
+
+    Http::preventStrayRequests();
+
+    Http::fakeSequence()->pushResponse(Http::response(
+        "data: {\"error\":{\"code\":429,\"message\":\"Upstream provider rate limited.\"}}\n\ndata: [DONE]\n\n",
+        200,
+        ['Content-Type' => 'text/event-stream'],
+    ));
+
+    RuntimeObservationCollector::begin();
+
+    $stream = (new BenchmarkedAgent)->stream(
+        'Extract this receipt.',
+        provider: 'stream-error',
+        model: 'primary/model-a',
+    );
+
+    $events = [];
+    $caught = null;
+    $observationsAtThrow = null;
+
+    try {
+        foreach ($stream as $event) {
+            $events[] = $event;
+        }
+    } catch (StreamErrorException $exception) {
+        $caught = $exception;
+
+        // The failed attempt must already be folded by the time the loop's
+        // terminal exception reaches the consumer.
+        $observationsAtThrow = RuntimeObservationCollector::finish();
+    }
+
+    expect($caught)->not->toBeNull()
+        ->and($caught->error?->message)->toBe('Upstream provider rate limited.')
+        // The stream handed the consumer exactly one Error event, no duplicates.
+        ->and($events)->toHaveCount(1)
+        ->and($events[0])->toBeInstanceOf(Error::class)
+        // ...and exactly one failed observation row, recorded before the throw.
+        ->and($observationsAtThrow)->toHaveCount(1)
+        ->and($observationsAtThrow[0]->requestedProvider)->toBe('stream-error')
+        ->and($observationsAtThrow[0]->requestedModel)->toBe('primary/model-a')
+        ->and($observationsAtThrow[0]->effectiveProvider)->toBeNull()
+        ->and($observationsAtThrow[0]->effectiveModel)->toBeNull()
+        ->and($observationsAtThrow[0]->usage->toArray())->toBe([
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+            'cached_input_tokens' => 0,
+            'reasoning_tokens' => 0,
+        ])
+        ->and($observationsAtThrow[0]->succeeded)->toBeFalse();
+
+    Http::assertSentCount(1);
+});
+
+it('observes each attempt of a native streaming failover prompt with stubbed SSE transport', function (): void {
+    $this->app->register(AiServiceProvider::class);
+
+    config([
+        'ai.providers.stream-primary' => ['driver' => 'openrouter', 'key' => 'test-key'],
+        'ai.providers.stream-backup' => ['driver' => 'openrouter', 'key' => 'test-key'],
+    ]);
+
+    Http::preventStrayRequests();
+
+    Http::fakeSequence()
+        ->push(status: 429)
+        ->pushResponse(Http::response(implode("\n\n", [
+            'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"google/gemini-effective","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}',
+            'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"google/gemini-effective","choices":[{"index":0,"delta":{"content":"{\"merchant\":\"Acme\"}"},"finish_reason":null}]}',
+            'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"google/gemini-effective","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4}}',
+            'data: [DONE]',
+        ])."\n\n", 200, ['Content-Type' => 'text/event-stream']));
+
+    Event::fake();
+
+    RuntimeObservationCollector::begin();
+
+    $stream = (new BenchmarkedAgent)->stream(
+        'Extract this receipt.',
+        provider: ['stream-primary' => 'primary/model-a', 'stream-backup' => 'backup/model-b'],
+    );
+
+    $events = [];
+
+    foreach ($stream as $event) {
+        $events[] = $event;
+    }
+
+    $observations = RuntimeObservationCollector::finish();
+
+    $deltas = array_values(array_filter(
+        $events,
+        static fn (StreamEvent $event): bool => $event instanceof TextDelta,
+    ));
+
+    expect($stream->text)->toBe('{"merchant":"Acme"}')
+        // The streamed text arrived exactly once; the wrapper replayed nothing.
+        ->and($deltas)->toHaveCount(1)
+        ->and($deltas[0]->delta)->toBe('{"merchant":"Acme"}')
+        // The 429-limited first attempt surfaces mid-stream (the HTTP call is
+        // deferred until iteration), so only the wrapper can record it...
+        ->and($observations)->toHaveCount(2)
+        ->and($observations[0]->requestedProvider)->toBe('stream-primary')
+        ->and($observations[0]->requestedModel)->toBe('primary/model-a')
+        ->and($observations[0]->succeeded)->toBeFalse()
+        ->and($observations[0]->usage->inputTokens)->toBe(0)
+        // ...while the streamed fallback attempt reports its own row and usage.
+        ->and($observations[1]->requestedProvider)->toBe('stream-backup')
+        ->and($observations[1]->requestedModel)->toBe('backup/model-b')
+        ->and($observations[1]->succeeded)->toBeTrue()
+        ->and($observations[1]->effectiveProvider)->toBe('stream-backup')
+        ->and($observations[1]->effectiveModel)->toBe('google/gemini-effective')
+        ->and($observations[1]->usage->inputTokens)->toBe(12)
+        ->and($observations[1]->usage->outputTokens)->toBe(4)
+        ->and(Event::dispatched(AgentFailedOver::class))->toHaveCount(1)
+        ->and(Event::assertNotDispatched(AgentFailed::class));
+
+    Http::assertSentCount(2);
 });
 
 it('rejects nested observation spans', function (): void {
