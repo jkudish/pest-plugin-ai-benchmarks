@@ -57,8 +57,6 @@ jobs:
 
       - name: Install dependencies
         working-directory: pest-plugin-ai-benchmarks
-        # bash on every OS: on Windows the default shell runs composer.bat
-        # through cmd, which strips the ^ and pins Laravel to exactly 13.23.0.
         shell: bash
         run: |
           composer require "laravel/framework:^13.23" "orchestra/testbench:^11.1" --no-interaction --no-update
