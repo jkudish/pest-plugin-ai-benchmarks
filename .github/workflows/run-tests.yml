@@ -57,6 +57,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: pest-plugin-ai-benchmarks
+        shell: bash
         run: |
           composer require "laravel/framework:^13.23" "orchestra/testbench:^11.1" --no-interaction --no-update
           composer update --${{ matrix.stability }} --prefer-dist --no-interaction
