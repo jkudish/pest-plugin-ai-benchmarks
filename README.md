@@ -109,7 +109,20 @@ It can use ordinary Pest expectations or Pest Evals scorers. Use `toPassBenchmar
 })
 ```
 
-The benchmark expectation delegates scoring and pass/fail behavior to Pest Evals' native `toPassScorer()` expectation while recording the result through its public `Scorer` contract. This avoids an unpublished callback or a maintained Pest Evals fork. Pest Evals convenience expectations such as `toBeRelevant()` remain available as ordinary assertions, but version 0.1 only records explicitly supplied scorers in benchmark scorecards.
+The benchmark expectation delegates scoring and pass/fail behavior to Pest Evals' native `toPassScorer()` expectation while recording the result through its public `Scorer` contract. This avoids an unpublished callback or a maintained Pest Evals fork. Pest Evals convenience expectations such as `toBeRelevant()` remain available as ordinary assertions, but only explicitly supplied scorers are recorded in benchmark scorecards.
+
+Use `toPassBenchmarkScorers()` when a trial is judged by more than one scorer:
+
+```php
+->evaluate(function (string $output): void {
+    expect($output)->toPassBenchmarkScorers([
+        [new LeakScorer, 1.0],
+        [new ReceiptAccuracyScorer, 0.9],
+    ]);
+})
+```
+
+Every scorer runs and is recorded before the expectation fails, and the failure lists every scorer below its threshold. Chaining `toPassBenchmarkScorer()` calls instead stops at the first failure, so later scorers are missing from that trial's evidence, and a trial with a different set of recorded scorers is not comparable with a baseline.
 
 The same evaluation callback runs after a live target, during replay, and when resume reuses compatible output.
 
@@ -120,8 +133,12 @@ Add the middleware to an eval-only subclass of your production Laravel AI agent:
 ```php
 use App\Ai\Agents\ReceiptOcrAgent;
 use Jkudish\PestAiBenchmarks\LaravelAi\BenchmarkAgentMiddleware;
+use Laravel\Ai\Attributes\Strict;
+use Laravel\Ai\Attributes\Timeout;
 use Laravel\Ai\Contracts\HasMiddleware;
 
+#[Strict]
+#[Timeout(60)]
 final class BenchmarkReceiptOcrAgent extends ReceiptOcrAgent implements HasMiddleware
 {
     public function middleware(): array
@@ -130,6 +147,16 @@ final class BenchmarkReceiptOcrAgent extends ReceiptOcrAgent implements HasMiddl
     }
 }
 ```
+
+Here `ReceiptOcrAgent` is declared with `#[Strict]` and `#[Timeout(60)]`. Repeat every Laravel AI attribute of the production agent on the subclass. Laravel AI reads attributes such as `#[Strict]`, `#[Timeout]`, `#[Model]`, `#[Provider]`, `#[MaxTokens]`, `#[Temperature]` and `#[UseCheapestModel]` from the concrete agent class, and PHP does not inherit class attributes. A subclass that omits them sends a different request than production. The middleware checks this before the request: when the subclass's Laravel AI attributes differ from its parent's, it refuses to send the request and fails the trial with `UnfaithfulInstrumentation`, naming the missing or different attributes. The trial fails even if the application under test catches that exception. To check an agent ahead of a live run, for example in an ordinary test:
+
+```php
+use Jkudish\PestAiBenchmarks\LaravelAi\InstrumentedAgent;
+
+InstrumentedAgent::assertFaithful(BenchmarkReceiptOcrAgent::class);
+```
+
+Live observation requires `laravel/ai` 1.0 or newer.
 
 The middleware is inert outside an active `benchmark()` body. Real calls made through an instrumented agent are recorded as `live`; Laravel AI fake-gateway calls and uninstrumented benchmark bodies remain `simulated` and cannot be promoted as baselines. Runtime response metadata is authoritative for the effective provider and model, even when it differs from the requested configuration. Pricing is calculated through `jkudish/laravel-ai-pricing`. Synchronous OpenRouter responses retain provider-reported `usage.cost` across every generation step; other providers use normalized usage and catalog pricing when their responses do not include money. Partial step cost is never presented as an authoritative total.
 
@@ -145,7 +172,11 @@ storage/app/ai-evals/runs/<run-id>/
 
 Stable scorecards are recursively sanitized and exclude prompts, outputs, expected values, and scorer inputs. Private replay data retains the exact JSON-safe output needed to rerun evaluation, including sensitive-looking keys and long strings, and must be protected as application data.
 
-Requested and effective model identities are recorded separately. Scorecards use the bundled [JSON Schema 2020-12 contract](resources/schema/scorecard.schema.json).
+Requested and effective model identities are recorded separately. A trial with no observed model call records the configured model as requested and no effective model.
+
+A failed trial says why. The scorecard's Pest test result carries the stage (configuration, target, or evaluation) and the exception class, for example `The target failed (RuntimeException).`, but never the exception message, which can contain application data. The message is kept with the trial in `replay.private.json`. A configuration that cannot be applied, such as a production model key that does not resolve, is recorded as a failed trial, so the run is still written.
+
+Scorecards use the bundled [JSON Schema 2020-12 contract](resources/schema/scorecard.schema.json) and record the installed package version.
 
 ## Replay and resume
 
@@ -196,7 +227,7 @@ Without `--benchmark-baseline`, results remain evidence-only. A failed or not-ev
 
 `reference('production')` can also identify same-run comparative evidence without turning it into a historical baseline.
 
-## Serial execution in version 0.1
+## Serial execution
 
 Benchmark evals deliberately run serially. Combining `--evals` with `--parallel` or `-p` fails before execution because partial worker scorecards cannot yet be aggregated truthfully.
 
@@ -215,10 +246,11 @@ Benchmark evals deliberately run serially. Combining `--evals` with `--parallel`
 
 - PHP 8.4 or newer.
 - Laravel 13.23 or newer.
-- Pest 5.
-- Pest Evals 5.0.2 or newer.
+- Pest 5.2.1 or newer.
+- Pest Evals 5.1 or newer.
+- Laravel AI 1.0 or newer, for live observations (optional otherwise).
 
-Pest 5 requires Symfony Process 8.1, while Laravel 12 requires Symfony Process 7.x. Those upstream constraints cannot be installed together, so Laravel 12 is not supported by version 0.1.
+Pest 5 requires Symfony Process 8.1, while Laravel 12 requires Symfony Process 7.x. Those upstream constraints cannot be installed together, so Laravel 12 is not supported. Pest Evals 5.0 conflicts with Laravel AI 1.x, and Pest Evals 5.1 requires Pest 5.2.1.
 
 ## Stability
 
