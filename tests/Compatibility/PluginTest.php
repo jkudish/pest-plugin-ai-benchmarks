@@ -146,14 +146,18 @@ it('applies named configurations and emits a durable run bundle in eval mode', f
     $candidate = collect($trials)->firstWhere('configuration', 'candidate');
     $measurement = $candidate['results'][0]['measurements'][0] ?? null;
 
+    // Nothing observed a model call, so the configured model is what was
+    // requested and no effective model is claimed.
     expect($measurement['mode'] ?? null)->toBe('simulated')
         ->and($measurement['requested_model'] ?? null)->toBe([
             'provider' => 'openrouter',
             'model' => 'candidate/model',
-        ])->and($measurement['effective_model'] ?? null)->toBe([
-            'provider' => 'openrouter',
-            'model' => 'candidate/model',
-        ]);
+        ])->and($measurement['effective_model'] ?? null)->toBeNull();
+
+    $production = collect($trials)->firstWhere('configuration', 'production');
+
+    expect($production['results'][0]['measurements'][0]['requested_model'] ?? null)->not->toBeNull()
+        ->and($production['results'][0]['measurements'][0]['effective_model'] ?? null)->toBeNull();
 
     expect(fn () => (new BaselineStore(RunPaths::forProject($root)))->assertPromotable($scorecard))
         ->toThrow(RuntimeException::class, 'Simulated evidence cannot be promoted as a baseline.');

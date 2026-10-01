@@ -12,9 +12,11 @@ use Jkudish\PestAiBenchmarks\Configuration;
 use Jkudish\PestAiBenchmarks\ConfigurationDatasetValue;
 use Jkudish\PestAiBenchmarks\Evidence\RuntimeScorerCollector;
 use Jkudish\PestAiBenchmarks\LaravelAi\RuntimeObservationCollector;
+use Jkudish\PestAiBenchmarks\LaravelAi\UnfaithfulInstrumentation;
 use Jkudish\PestAiBenchmarks\ModelIdentityEvidence;
 use Jkudish\PestAiBenchmarks\Plugin;
 use Jkudish\PestAiBenchmarks\Reporters\ExecutionRecorder;
+use Jkudish\PestAiBenchmarks\Reporters\TrialFailure;
 use Jkudish\PestAiBenchmarks\Runs\ReplayReader;
 use Jkudish\PestAiBenchmarks\Runs\ResumeReader;
 use Jkudish\PestAiBenchmarks\Runs\RunPaths;
@@ -191,66 +193,117 @@ if (! function_exists('benchmark')) {
                     }
                 }
 
-                return (new BenchmarkExecutor)->run(
-                    $configuration,
-                    function (ModelIdentityEvidence $identity) use ($caseArguments, $caseId, $configuration, $configurationName, $declaration, $description, $evaluationIdentity, $fingerprint, $repeat, $targetIdentity, $test): mixed {
-                        $targetStartedAt = hrtime(true);
-                        $targetLatencyMs = 0.0;
-                        $targetReturned = false;
-                        $output = null;
-                        $passed = false;
-                        $observations = [];
-                        RuntimeObservationCollector::begin();
-                        RuntimeScorerCollector::begin();
+                $targetStarted = false;
 
-                        try {
+                try {
+                    return (new BenchmarkExecutor)->run(
+                        $configuration,
+                        function (ModelIdentityEvidence $identity) use (&$targetStarted, $caseArguments, $caseId, $configuration, $configurationName, $declaration, $description, $evaluationIdentity, $fingerprint, $repeat, $targetIdentity, $test): mixed {
+                            $targetStarted = true;
+                            $targetStartedAt = hrtime(true);
+                            $targetLatencyMs = 0.0;
+                            $targetReturned = false;
+                            $output = null;
+                            $passed = false;
+                            $failure = null;
+                            $observations = [];
+                            RuntimeObservationCollector::begin();
+                            RuntimeScorerCollector::begin();
+
                             try {
-                                $output = BenchmarkClosureInvoker::invoke($test, $this, ...$caseArguments);
-                                $targetReturned = true;
+                                try {
+                                    $output = BenchmarkClosureInvoker::invoke($test, $this, ...$caseArguments);
+                                    $targetReturned = true;
+                                } finally {
+                                    $targetLatencyMs = (hrtime(true) - $targetStartedAt) / 1_000_000;
+                                }
+
+                                $violation = RuntimeObservationCollector::violation();
+
+                                if ($violation !== null) {
+                                    $targetReturned = false;
+
+                                    throw new UnfaithfulInstrumentation($violation);
+                                }
+
+                                $observations = RuntimeObservationCollector::finish();
+                                RuntimeObservationCollector::begin(Component::Judge);
+
+                                if ($declaration->evaluation instanceof Closure) {
+                                    BenchmarkClosureInvoker::invoke($declaration->evaluation, $this, $output, ...$caseArguments);
+                                }
+
+                                $passed = true;
+                            } catch (Throwable $exception) {
+                                // The application may have caught the middleware's exception;
+                                // a flagged fidelity violation is the real cause of the failure.
+                                $violation = RuntimeObservationCollector::violation();
+                                $failure = $violation !== null && ! $exception instanceof UnfaithfulInstrumentation
+                                    ? new UnfaithfulInstrumentation($violation, previous: $exception)
+                                    : $exception;
+
+                                throw $failure;
                             } finally {
-                                $targetLatencyMs = (hrtime(true) - $targetStartedAt) / 1_000_000;
+                                if (RuntimeObservationCollector::active()) {
+                                    $observations = [...$observations, ...RuntimeObservationCollector::finish()];
+                                }
+                                $scorerObservations = RuntimeScorerCollector::finish();
+
+                                ExecutionRecorder::record(
+                                    benchmark: $description,
+                                    caseId: $caseId,
+                                    configurationName: $configurationName,
+                                    configuration: $configuration,
+                                    identity: $identity,
+                                    latencyMs: $targetLatencyMs,
+                                    passed: $passed,
+                                    output: $output,
+                                    context: $declaration->context,
+                                    targetIdentity: $targetIdentity,
+                                    observations: $observations,
+                                    scorerObservations: $scorerObservations,
+                                    repeat: $repeat,
+                                    fingerprint: $fingerprint,
+                                    declaration: $declaration,
+                                    evaluationIdentity: $evaluationIdentity,
+                                    targetReturned: $targetReturned,
+                                    failure: $failure === null ? null : TrialFailure::from(
+                                        $targetReturned ? TrialFailure::STAGE_EVALUATION : TrialFailure::STAGE_TARGET,
+                                        $failure,
+                                    ),
+                                );
                             }
 
-                            $observations = RuntimeObservationCollector::finish();
-                            RuntimeObservationCollector::begin(Component::Judge);
+                            return $output;
+                        },
+                    );
+                } catch (Throwable $exception) {
+                    // Configuration could not be applied (for example, a production
+                    // model key that does not resolve): record the failed trial so the
+                    // run is still written and says why.
+                    if (! $targetStarted) {
+                        ExecutionRecorder::record(
+                            benchmark: $description,
+                            caseId: $caseId,
+                            configurationName: $configurationName,
+                            configuration: $configuration,
+                            identity: new ModelIdentityEvidence($configuration->provider, $configuration->model, null, null),
+                            latencyMs: 0.0,
+                            passed: false,
+                            output: null,
+                            context: $declaration->context,
+                            targetIdentity: $targetIdentity,
+                            repeat: $repeat,
+                            fingerprint: $fingerprint,
+                            declaration: $declaration,
+                            evaluationIdentity: $evaluationIdentity,
+                            targetReturned: false,
+                            failure: TrialFailure::from(TrialFailure::STAGE_CONFIGURATION, $exception),
+                        );
+                    }
 
-                            if ($declaration->evaluation instanceof Closure) {
-                                BenchmarkClosureInvoker::invoke($declaration->evaluation, $this, $output, ...$caseArguments);
-                            }
-
-                            $passed = true;
-                        } catch (Throwable $exception) {
-                            throw $exception;
-                        } finally {
-                            if (RuntimeObservationCollector::active()) {
-                                $observations = [...$observations, ...RuntimeObservationCollector::finish()];
-                            }
-                            $scorerObservations = RuntimeScorerCollector::finish();
-
-                            ExecutionRecorder::record(
-                                benchmark: $description,
-                                caseId: $caseId,
-                                configurationName: $configurationName,
-                                configuration: $configuration,
-                                identity: $identity,
-                                latencyMs: $targetLatencyMs,
-                                passed: $passed,
-                                output: $output,
-                                context: $declaration->context,
-                                targetIdentity: $targetIdentity,
-                                observations: $observations,
-                                scorerObservations: $scorerObservations,
-                                repeat: $repeat,
-                                fingerprint: $fingerprint,
-                                declaration: $declaration,
-                                evaluationIdentity: $evaluationIdentity,
-                                targetReturned: $targetReturned,
-                            );
-                        }
-
-                        return $output;
-                    },
-                );
+                    throw $exception;
+                }
             });
         });
 

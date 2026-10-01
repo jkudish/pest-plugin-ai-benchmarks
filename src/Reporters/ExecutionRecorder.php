@@ -203,7 +203,7 @@ final class ExecutionRecorder
             'schema_version' => Scorecard::SCHEMA_VERSION,
             'package' => [
                 'name' => Scorecard::PACKAGE_NAME,
-                'version' => '0.1.0-dev',
+                'version' => Scorecard::installedPackageVersion(),
             ],
         ]));
     }
@@ -232,6 +232,7 @@ final class ExecutionRecorder
         ?BenchmarkDeclaration $declaration = null,
         ?array $evaluationIdentity = null,
         bool $targetReturned = true,
+        ?TrialFailure $failure = null,
     ): void {
         $fingerprint ??= self::trialFingerprint(
             $benchmark,
@@ -269,6 +270,7 @@ final class ExecutionRecorder
             observations: $observations,
             pricingQuotes: $pricingQuotes,
             scorerObservations: $scorerObservations,
+            failure: $failure,
         );
     }
 
@@ -436,6 +438,7 @@ final class ExecutionRecorder
                 'trial_id' => $trialId->value,
                 'fingerprint' => $record->fingerprint,
                 'output' => $record->output,
+                ...($record->failure === null ? [] : ['failure' => $record->failure->toArray()]),
             ];
         }
 
@@ -528,6 +531,7 @@ final class ExecutionRecorder
             threshold: null,
             sample: null,
             samples: null,
+            packageReasoning: $record->failure?->summary(),
         )];
 
         foreach ($record->scorerObservations as $observation) {
@@ -562,13 +566,15 @@ final class ExecutionRecorder
         ));
 
         if ($record->sourceMeasurements === null && $targetObservations === []) {
+            // No runtime evidence: the resolved configuration is what was
+            // requested, and no effective model was observed.
             $measurements[] = new Measurement(
                 component: Component::Target,
                 mode: ExecutionMode::Simulated,
-                requestedProvider: $record->identity->requestedProvider,
-                requestedModel: $record->identity->requestedModel,
-                effectiveProvider: $record->identity->effectiveProvider,
-                effectiveModel: $record->identity->effectiveModel,
+                requestedProvider: $record->identity->requestedProvider ?? $record->identity->effectiveProvider,
+                requestedModel: $record->identity->requestedModel ?? $record->identity->effectiveModel,
+                effectiveProvider: null,
+                effectiveModel: null,
                 latencyMs: $record->latencyMs,
                 usage: [],
                 retries: 0,
@@ -650,6 +656,9 @@ final class ExecutionRecorder
                 threshold: is_float($result['threshold'] ?? null) || is_int($result['threshold'] ?? null) ? (float) $result['threshold'] : null,
                 sample: is_int($result['sample'] ?? null) ? $result['sample'] : null,
                 samples: is_int($result['samples'] ?? null) ? $result['samples'] : null,
+                // Stable evidence only ever carries package-written reasoning on
+                // the Pest test result; scorer reasoning was never stored.
+                packageReasoning: $result['scorer'] === 'pest:test' && is_string($result['reasoning'] ?? null) ? $result['reasoning'] : null,
             );
         }
 

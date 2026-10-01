@@ -32,6 +32,15 @@ final class BenchmarkAgentMiddleware
             return $next($step);
         }
 
+        $agent = $step->options?->agent;
+        $violation = $agent instanceof Agent ? InstrumentedAgent::violation($agent::class) : null;
+
+        if ($violation !== null) {
+            RuntimeObservationCollector::flagUnfaithful($violation);
+
+            throw new UnfaithfulInstrumentation($violation);
+        }
+
         $startedAt = hrtime(true);
         $mode = self::executionMode($step);
         $component = RuntimeObservationCollector::component() ?? Component::Target;

@@ -17,7 +17,7 @@ Pest AI Benchmarks extends Pest's existing vocabulary with comparative configura
 - [x] Publish `v0.1.0` to GitHub and Packagist.
 - [x] Verify installation in a clean consumer from the published package.
 
-Laravel AI's current public response objects do not expose authoritative provider-reported monetary cost. Benchmark measurements use the shared pricing package's configured and public catalog resolution until Laravel AI surfaces that value.
+Benchmark measurements use provider-reported cost where the response carries it (synchronous OpenRouter responses report `usage.cost` for every generation step) and fall back to the shared pricing package's configured and public catalog resolution otherwise. Partial step cost is never presented as an authoritative total.
 
 ## Planned
 

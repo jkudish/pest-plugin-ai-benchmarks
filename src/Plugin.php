@@ -22,6 +22,8 @@ use Pest\Evals\Scorers\Scorer;
 use Pest\Expectation;
 use Pest\Plugins\Parallel;
 use Pest\Support\Container;
+use PHPUnit\Framework\AssertionFailedError;
+use PHPUnit\Framework\ExpectationFailedException;
 use Symfony\Component\Console\Output\OutputInterface;
 
 final class Plugin implements AddsOutput, Bootable, HandlesArguments, HandlesOriginalArguments, Terminable
@@ -63,6 +65,47 @@ final class Plugin implements AddsOutput, Bootable, HandlesArguments, HandlesOri
             }
 
             return $expectation;
+        });
+
+        expect()->extend('toPassBenchmarkScorers', function (array $scorers, ?string $expected = null): Expectation {
+            /** @var Expectation<string> $this */
+            if ($scorers === []) {
+                throw new InvalidArgumentException('toPassBenchmarkScorers() needs at least one scorer.');
+            }
+
+            $failures = [];
+
+            // Every scorer runs and is recorded before any failure is raised, so
+            // one failing scorer never hides the others' evidence from the scorecard
+            // (or makes later comparisons incompatible by changing the scorer set).
+            foreach ($scorers as $entry) {
+                [$scorer, $threshold] = is_array($entry)
+                    ? [$entry[0] ?? null, $entry[1] ?? Scorer::DEFAULT_THRESHOLD]
+                    : [$entry, Scorer::DEFAULT_THRESHOLD];
+
+                if (! $scorer instanceof Scorer || ! is_float($threshold) && ! is_int($threshold)) {
+                    throw new InvalidArgumentException('toPassBenchmarkScorers() takes Scorer instances or [Scorer, threshold] pairs.');
+                }
+
+                try {
+                    $this->__call('toPassBenchmarkScorer', [$scorer, (float) $threshold, $expected]);
+                } catch (AssertionFailedError $failure) {
+                    $failures[] = $failure;
+                }
+            }
+
+            if (count($failures) === 1) {
+                throw $failures[0];
+            }
+
+            if ($failures !== []) {
+                throw new ExpectationFailedException(implode(PHP_EOL, array_map(
+                    static fn (AssertionFailedError $failure): string => $failure->getMessage(),
+                    $failures,
+                )));
+            }
+
+            return $this;
         });
     }
 

@@ -34,5 +34,6 @@ final readonly class RecordedTrial
         public array $scorerObservations = [],
         public ?array $stableResults = null,
         public ?array $sourceMeasurements = null,
+        public ?TrialFailure $failure = null,
     ) {}
 }
