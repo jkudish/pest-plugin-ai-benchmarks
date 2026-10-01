@@ -28,6 +28,7 @@ final readonly class Result
         public ?float $threshold = null,
         public ?int $sample = null,
         public ?int $samples = null,
+        ?string $packageReasoning = null,
     ) {
         EvidenceId::from($this->id->value, 'res');
 
@@ -54,8 +55,12 @@ final readonly class Result
 
         // Scorer reasoning may contain arbitrary private document content. It
         // is not safe to make it stable evidence by applying token regexes.
+        // Only reasoning this package writes itself (a failed trial's stage
+        // and exception class, never a message) is kept.
         unset($reasoning);
-        $this->reasoning = null;
+        $this->reasoning = $packageReasoning === null
+            ? null
+            : StableEvidenceSanitizer::text($packageReasoning, self::MAX_REASONING_BYTES);
     }
 
     /** @return array<string, mixed> */

@@ -22,6 +22,8 @@ final class RuntimeObservationCollector
     /** @var array<int, array{invocationId: ?string, observation: AgentObservation, startedAt: int}> */
     private static array $openBuckets = [];
 
+    private static ?string $violation = null;
+
     public static function begin(Component $component = Component::Target): void
     {
         if (self::$active) {
@@ -32,6 +34,7 @@ final class RuntimeObservationCollector
         self::$component = $component;
         self::$observations = [];
         self::$openBuckets = [];
+        self::$violation = null;
     }
 
     public static function active(): bool
@@ -42,6 +45,28 @@ final class RuntimeObservationCollector
     public static function component(): ?Component
     {
         return self::$component;
+    }
+
+    /**
+     * Mark the active span unfaithful: an instrumented agent would have sent
+     * a different request than production. The application under test may
+     * catch the exception the middleware throws, so the benchmark reads this
+     * flag after the target and fails the trial itself.
+     */
+    public static function flagUnfaithful(string $violation): void
+    {
+        if (self::$active) {
+            self::$violation ??= $violation;
+        }
+    }
+
+    /**
+     * The first fidelity violation flagged in the active span, if any. Read it
+     * before finish(), which clears it.
+     */
+    public static function violation(): ?string
+    {
+        return self::$violation;
     }
 
     /**
@@ -125,6 +150,7 @@ final class RuntimeObservationCollector
         self::$component = null;
         self::$observations = [];
         self::$openBuckets = [];
+        self::$violation = null;
     }
 
     private static function merged(AgentObservation $into, AgentObservation $step, int $spanNanoseconds): AgentObservation

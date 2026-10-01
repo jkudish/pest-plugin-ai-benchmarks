@@ -13,11 +13,11 @@ final readonly class ReplayPayload
 {
     public const string SCHEMA_VERSION = '0.1.0';
 
-    /** @var array<int, array{trial_id: string, fingerprint: string, output: mixed}> */
+    /** @var array<int, array{trial_id: string, fingerprint: string, output: mixed, failure?: array{stage: string, class: string, message: string}}> */
     private array $trials;
 
     /**
-     * @param  array<int, array{trial_id: string, fingerprint: string, output: mixed}>  $trials
+     * @param  array<int, array{trial_id: string, fingerprint: string, output: mixed, failure?: array{stage: string, class: string, message: string}}>  $trials
      */
     public function __construct(array $trials)
     {
@@ -34,6 +34,11 @@ final readonly class ReplayPayload
                 'trial_id' => $trial['trial_id'],
                 'fingerprint' => $trial['fingerprint'],
                 'output' => $this->assertJsonSafe($trial['output']),
+                ...(isset($trial['failure']) ? ['failure' => [
+                    'stage' => (string) $trial['failure']['stage'],
+                    'class' => (string) $trial['failure']['class'],
+                    'message' => (string) $trial['failure']['message'],
+                ]] : []),
             ];
         }
 
@@ -46,7 +51,7 @@ final readonly class ReplayPayload
         $this->trials = $normalized;
     }
 
-    /** @return array{schema_version: string, trials: array<int, array{trial_id: string, fingerprint: string, output: mixed}>} */
+    /** @return array{schema_version: string, trials: array<int, array{trial_id: string, fingerprint: string, output: mixed, failure?: array{stage: string, class: string, message: string}}>} */
     public function toArray(): array
     {
         return [

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Jkudish\PestAiBenchmarks\Scorecards;
 
+use Composer\InstalledVersions;
 use DateTimeImmutable;
 use DateTimeZone;
 use InvalidArgumentException;
@@ -11,6 +12,7 @@ use Jkudish\PestAiBenchmarks\Results\EvidenceId;
 use Jkudish\PestAiBenchmarks\Results\OpaqueContext;
 use Jkudish\PestAiBenchmarks\Results\StableEvidenceSanitizer;
 use JsonException;
+use OutOfBoundsException;
 
 /** @internal */
 final readonly class Scorecard
@@ -36,13 +38,13 @@ final readonly class Scorecard
         public string $benchmark,
         public DateTimeImmutable $createdAt,
         public array $trials,
-        public string $packageVersion = '0.1.0-dev',
+        public ?string $packageVersion = null,
         public ?OpaqueContext $context = null,
     ) {
         EvidenceId::from($this->id->value, 'sc');
         EvidenceId::from($this->executionId->value, 'exec');
 
-        if (trim($this->benchmark) === '' || trim($this->packageVersion) === '') {
+        if (trim($this->benchmark) === '' || ($this->packageVersion !== null && trim($this->packageVersion) === '')) {
             throw new InvalidArgumentException('Scorecard benchmark and package version must not be empty.');
         }
 
@@ -56,6 +58,19 @@ final readonly class Scorecard
 
     }
 
+    /**
+     * The installed version of this package, as Composer reports it (a tag
+     * such as "0.2.0", or a branch such as "dev-main" for source installs).
+     */
+    public static function installedPackageVersion(): string
+    {
+        try {
+            return InstalledVersions::getPrettyVersion(self::PACKAGE_NAME) ?? 'unknown';
+        } catch (OutOfBoundsException) {
+            return 'unknown';
+        }
+    }
+
     /** @return array<string, mixed> */
     public function toArray(): array
     {
@@ -64,7 +79,7 @@ final readonly class Scorecard
             'schema_version' => self::SCHEMA_VERSION,
             'package' => [
                 'name' => self::PACKAGE_NAME,
-                'version' => StableEvidenceSanitizer::text($this->packageVersion, self::MAX_PACKAGE_VERSION_BYTES),
+                'version' => StableEvidenceSanitizer::text($this->packageVersion ?? self::installedPackageVersion(), self::MAX_PACKAGE_VERSION_BYTES),
             ],
             'scorecard_id' => $this->id->value,
             'execution_id' => $this->executionId->value,
