@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Allow `jkudish/laravel-ai-pricing` `^0.3.0 || ^0.4.1` alongside `^0.2.0`. Verified against v0.4.1.
+
 ## [0.2.0] - 2026-10-01
 
 Upgrading: re-promote baselines from a 0.2 run. Baseline compatibility does not check the package version, and 0.2 counts input tokens differently (see Changed), so 0.1 baselines are not comparable for cost.
