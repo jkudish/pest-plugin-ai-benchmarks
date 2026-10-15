@@ -34,7 +34,6 @@ function reporterScorecard(): Scorecard
                         id: EvidenceId::from('res_01JREPORTRESULT', 'res'),
                         scorer: 'relevance',
                         score: 0.9,
-                        reasoning: null,
                         passed: true,
                         measurements: [
                             new Measurement(

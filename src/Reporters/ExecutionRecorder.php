@@ -525,7 +525,6 @@ final class ExecutionRecorder
             id: EvidenceId::generate('res'),
             scorer: 'pest:test',
             score: $record->passed ? 1.0 : 0.0,
-            reasoning: null,
             passed: $record->passed,
             measurements: $measurements,
             threshold: null,
@@ -539,7 +538,6 @@ final class ExecutionRecorder
                 id: EvidenceId::generate('res'),
                 scorer: $observation->scorer,
                 score: $observation->score,
-                reasoning: $observation->reasoning,
                 passed: $observation->passed,
                 measurements: $measurements,
                 threshold: $observation->threshold,
@@ -646,7 +644,6 @@ final class ExecutionRecorder
                 id: EvidenceId::generate('res'),
                 scorer: $result['scorer'],
                 score: is_float($result['score'] ?? null) || is_int($result['score'] ?? null) ? (float) $result['score'] : null,
-                reasoning: is_string($result['reasoning'] ?? null) ? $result['reasoning'] : null,
                 passed: is_bool($result['passed'] ?? null) ? $result['passed'] : null,
                 measurements: self::measurementsFromStable(
                     self::stableRecords($result['measurements'], 'Completed trial contains invalid measurement evidence.'),

@@ -53,7 +53,6 @@ function lifecycleScorecard(
                         id: EvidenceId::from('res_01JRUNRESULT', 'res'),
                         scorer: 'pest:test',
                         score: 0.9,
-                        reasoning: 'Relevant.',
                         passed: true,
                         measurements: [
                             new Measurement(

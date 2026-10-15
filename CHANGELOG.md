@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-15
+
 ### Changed
 
 - Allow `jkudish/laravel-ai-pricing` `^0.3.0 || ^0.4.1` alongside `^0.2.0`. Verified against v0.4.1.
+- The internal `Scorecards\Result` no longer accepts scorer reasoning at all, instead of accepting and discarding it. Stable scorecards still never contain arbitrary scorer reasoning.
 
 ## [0.2.0] - 2026-10-01
 
@@ -57,6 +60,7 @@ Upgrading: re-promote baselines from a 0.2 run. Baseline compatibility does not 
 
 - Declared Laravel 13.23 as the supported framework line because Pest 5's Symfony Process requirement is incompatible with Laravel 12.
 
-[Unreleased]: https://github.com/jkudish/pest-plugin-ai-benchmarks/compare/v0.2.0...main
+[Unreleased]: https://github.com/jkudish/pest-plugin-ai-benchmarks/compare/v0.2.1...main
+[0.2.1]: https://github.com/jkudish/pest-plugin-ai-benchmarks/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jkudish/pest-plugin-ai-benchmarks/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jkudish/pest-plugin-ai-benchmarks/releases/tag/v0.1.0

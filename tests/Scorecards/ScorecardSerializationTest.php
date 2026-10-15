@@ -12,7 +12,7 @@ use Jkudish\PestAiBenchmarks\Scorecards\Result;
 use Jkudish\PestAiBenchmarks\Scorecards\Scorecard;
 use Jkudish\PestAiBenchmarks\Scorecards\Trial;
 
-function scorecardFixture(?OpaqueContext $context = null, ?string $reasoning = 'All required fields matched.'): Scorecard
+function scorecardFixture(?OpaqueContext $context = null): Scorecard
 {
     return new Scorecard(
         id: EvidenceId::from('sc_01JTESTSCORECARD', 'sc'),
@@ -31,7 +31,6 @@ function scorecardFixture(?OpaqueContext $context = null, ?string $reasoning = '
                         id: EvidenceId::from('res_01JTESTRESULT', 'res'),
                         scorer: 'receipt-fields',
                         score: 0.95,
-                        reasoning: $reasoning,
                         passed: true,
                         measurements: [
                             new Measurement(
@@ -120,14 +119,6 @@ it('keeps private raw evaluation material out of stable scorecards', function ()
         ->and(str_contains($json, '"expected":'))->toBeFalse();
 });
 
-it('omits arbitrary scorer reasoning from stable serialization', function (): void {
-    $reasoning = 'Bearer private-token sk-1234567890abcdefgh '.str_repeat('é', Result::MAX_REASONING_BYTES);
-    $serialized = scorecardFixture(reasoning: $reasoning)->toArray();
-    $stableReasoning = $serialized['trials'][0]['results'][0]['reasoning'];
-
-    expect($stableReasoning)->toBeNull();
-});
-
 it('bundles a JSON Schema 2020-12 contract matching the serializer version', function (): void {
     $contents = file_get_contents(dirname(__DIR__, 2).'/resources/schema/scorecard.schema.json');
 
@@ -146,7 +137,7 @@ it('bundles a JSON Schema 2020-12 contract matching the serializer version', fun
 });
 
 it('recursively sanitizes and bounds stable scorecard strings and nested evidence', function (): void {
-    $scorecard = scorecardFixture(reasoning: "Invalid \xFF Bearer private-token");
+    $scorecard = scorecardFixture();
     $serialized = $scorecard->toArray();
     $measurement = (new Measurement(
         component: Component::Target,

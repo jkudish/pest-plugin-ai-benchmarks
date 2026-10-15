@@ -22,7 +22,6 @@ final readonly class Result
         public EvidenceId $id,
         public string $scorer,
         public ?float $score,
-        ?string $reasoning,
         public ?bool $passed,
         public array $measurements,
         public ?float $threshold = null,
@@ -53,11 +52,9 @@ final readonly class Result
             throw new InvalidArgumentException('A result must contain at least one measurement.');
         }
 
-        // Scorer reasoning may contain arbitrary private document content. It
-        // is not safe to make it stable evidence by applying token regexes.
-        // Only reasoning this package writes itself (a failed trial's stage
-        // and exception class, never a message) is kept.
-        unset($reasoning);
+        // Scorer reasoning may contain arbitrary private document content, so a
+        // Result never accepts it. Only reasoning this package writes itself (a
+        // failed trial's stage and exception class, never a message) is kept.
         $this->reasoning = $packageReasoning === null
             ? null
             : StableEvidenceSanitizer::text($packageReasoning, self::MAX_REASONING_BYTES);
